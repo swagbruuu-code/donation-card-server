@@ -47,22 +47,24 @@ RING_OUTER = 80
 RING_WIDTH = 7  # refs ~6–7px; was 10 (too thick)
 
 # Amount tracking (px added to each glyph advance).
-AMOUNT_TRACKING = 2
+# Refs: nearly stroke-less Nuke/Smite; thin Starfall outline; tight tracking.
+AMOUNT_TRACKING = 0
 
-# Font sizes — Prompt ExtraBold for amount (Inter was too condensed vs refs)
-FONT_AMOUNT = 70
-FONT_DONATED = 46
+# Font sizes — locked vs Hazem refs (trial I: best IoU on amount+donated crop)
+FONT_AMOUNT = 72
+FONT_DONATED = 53
 FONT_NAME = 30
 DONATED_STROKE = 1
 NAME_STROKE = 2
-AMOUNT_STROKE = 2
+AMOUNT_STROKE = 0  # Nuke/Smite; Starfall uses +1 below
+AMOUNT_STROKE_STARFALL = 1
 ROBUX_SIZE = 62
-ROBUX_GAP = 12  # refs ~25px content gap; icon has transparent padding
+ROBUX_GAP = 10  # slightly tighter icon→digits vs prior 12
 ROBUX_OUTLINE = 2
 
 # Vertical stack (amount / donated to / names)
 AMOUNT_TOP = 53
-DONATED_TOP = 136
+DONATED_TOP = 135
 NAME_TOP = 212
 
 _FONTS_DIR = Path(__file__).resolve().parent / "fonts"
@@ -490,7 +492,7 @@ def render_card(
 
     amount_text = format_amount(amount)
     font_amount = load_font(FONT_AMOUNT, family="amount")
-    font_donated = load_font(FONT_DONATED, family="prompt_bold")
+    font_donated = load_font(FONT_DONATED, family="prompt_extrabold")
     font_name = load_font(FONT_NAME, family="prompt_extrabold")
 
     aw = tracked_text_width(amount_text, font_amount, AMOUNT_TRACKING)
@@ -516,6 +518,7 @@ def render_card(
 
     draw = ImageDraw.Draw(canvas)
     amount_x = pair_left + robux_size + gap
+    amount_stroke = AMOUNT_STROKE_STARFALL if tier == "Starfall" else AMOUNT_STROKE
     draw_text_tracked(
         draw,
         (amount_x, amount_y),
@@ -523,7 +526,7 @@ def render_card(
         font_amount,
         fill=(*accent, 255),
         tracking=AMOUNT_TRACKING,
-        stroke_width=AMOUNT_STROKE,
+        stroke_width=amount_stroke,
         stroke_fill=(0, 0, 0, 255),
     )
 
