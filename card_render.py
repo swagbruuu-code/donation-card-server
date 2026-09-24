@@ -622,9 +622,12 @@ def render_card(
 REF_LEFT_C = (540, 280)
 REF_RIGHT_C = (2307, 281)
 REF_AVATAR_R = 172
-REF_NAME_TOP = 528
-REF_NAME_FONT = 52
-REF_NAME_STROKE = {"Nuke": 3, "Smite": 3, "Starfall": 6}
+# Username band measured from ref "User"/"@User" glyphs
+REF_NAME_MID_Y = 560
+REF_NAME_FONT = 46
+REF_NAME_STROKE = {"Nuke": 2, "Smite": 3, "Starfall": 5}
+REF_NAME_BAND = (500, 620)  # y0, y1
+REF_NAME_HALF_W = 340
 
 
 def _paste_circular_avatar(
@@ -641,27 +644,64 @@ def _paste_circular_avatar(
     canvas.paste(av, (cx - radius, cy - radius), mask)
 
 
+def _erase_placeholder_names(canvas: Image.Image, cx: int) -> None:
+    """Remove ref User/@User glyphs; rebuild background so glow survives."""
+    import numpy as np
+
+    y0, y1 = REF_NAME_BAND
+    arr = np.array(canvas.convert("RGBA"))
+    x0 = max(0, int(cx) - REF_NAME_HALF_W)
+    x1 = min(arr.shape[1], int(cx) + REF_NAME_HALF_W)
+    region = arr[y0:y1, x0:x1].copy()
+    lum = region[:, :, :3].max(axis=2)
+    white = lum >= 180
+    # Dilate to swallow black stroke + AA fringe around glyphs
+    mimg = Image.fromarray((white.astype(np.uint8) * 255), mode="L")
+    for _ in range(3):
+        mimg = mimg.filter(ImageFilter.MaxFilter(9))
+    mask = np.array(mimg) > 0
+    for row in range(region.shape[0]):
+        m = mask[row]
+        if not m.any():
+            continue
+        if (~m).sum() >= 8:
+            bg = np.median(region[row][~m], axis=0)
+        else:
+            # sample just outside the name window on this row
+            left = arr[y0 + row, max(0, x0 - 60) : x0]
+            right = arr[y0 + row, x1 : min(arr.shape[1], x1 + 60)]
+            samples = []
+            if left.size:
+                samples.append(left)
+            if right.size:
+                samples.append(right)
+            if samples:
+                bg = np.median(np.concatenate(samples, axis=0), axis=0)
+            else:
+                bg = np.array([0, 0, 0, 255], dtype=np.float64)
+        region[row][m] = bg
+    arr[y0:y1, x0:x1] = region
+    canvas.paste(Image.fromarray(arr))
+
+
 def _cover_and_draw_names(
     canvas: Image.Image,
     donor_name: str,
     receiver_name: str,
     tier: str,
 ) -> None:
-    draw = ImageDraw.Draw(canvas)
     for cx, _cy in (REF_LEFT_C, REF_RIGHT_C):
-        # Tight black patch over placeholder User/@User only (no big nameplate bar)
-        draw.rectangle(
-            [cx - 280, REF_NAME_TOP - 4, cx + 280, REF_NAME_TOP + 58],
-            fill=(0, 0, 0),
-        )
+        _erase_placeholder_names(canvas, cx)
+    draw = ImageDraw.Draw(canvas)
     font = load_font(REF_NAME_FONT, family="prompt_extrabold")
     stroke = REF_NAME_STROKE.get(tier, 3)
     for name, cx in ((donor_name, REF_LEFT_C[0]), (receiver_name, REF_RIGHT_C[0])):
         label = name if str(name).startswith("@") else f"@{name}"
         bbox = draw.textbbox((0, 0), label, font=font, stroke_width=stroke)
         tw = bbox[2] - bbox[0]
+        th = bbox[1] + bbox[3]
         x = cx - tw / 2 - bbox[0]
-        y = REF_NAME_TOP - bbox[1]
+        y = REF_NAME_MID_Y - th / 2
         draw.text(
             (x, y),
             label,
