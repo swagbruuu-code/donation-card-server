@@ -617,11 +617,93 @@ def render_card(
     return canvas
 
 
+# Exact-ref canvas geometry (2816×704). Rings/amount/"donated to"/glow stay
+# as in the user's photo; only Roblox headshots + @names are composited on.
+REF_LEFT_C = (540, 280)
+REF_RIGHT_C = (2307, 281)
+REF_AVATAR_R = 172
+REF_NAME_TOP = 528
+REF_NAME_FONT = 52
+REF_NAME_STROKE = {"Nuke": 3, "Smite": 3, "Starfall": 6}
+
+
+def _paste_circular_avatar(
+    canvas: Image.Image,
+    avatar: Image.Image,
+    center: Tuple[int, int],
+    radius: int,
+) -> None:
+    cx, cy = center
+    diam = radius * 2
+    av = avatar.convert("RGBA").resize((diam, diam), Image.Resampling.LANCZOS)
+    mask = Image.new("L", (diam, diam), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, diam - 1, diam - 1), fill=255)
+    canvas.paste(av, (cx - radius, cy - radius), mask)
+
+
+def _cover_and_draw_names(
+    canvas: Image.Image,
+    donor_name: str,
+    receiver_name: str,
+    tier: str,
+) -> None:
+    draw = ImageDraw.Draw(canvas)
+    for cx, _cy in (REF_LEFT_C, REF_RIGHT_C):
+        # Tight black patch over placeholder User/@User only (no big nameplate bar)
+        draw.rectangle(
+            [cx - 280, REF_NAME_TOP - 4, cx + 280, REF_NAME_TOP + 58],
+            fill=(0, 0, 0),
+        )
+    font = load_font(REF_NAME_FONT, family="prompt_extrabold")
+    stroke = REF_NAME_STROKE.get(tier, 3)
+    for name, cx in ((donor_name, REF_LEFT_C[0]), (receiver_name, REF_RIGHT_C[0])):
+        label = name if str(name).startswith("@") else f"@{name}"
+        bbox = draw.textbbox((0, 0), label, font=font, stroke_width=stroke)
+        tw = bbox[2] - bbox[0]
+        x = cx - tw / 2 - bbox[0]
+        y = REF_NAME_TOP - bbox[1]
+        draw.text(
+            (x, y),
+            label,
+            font=font,
+            fill=(255, 255, 255, 255),
+            stroke_width=stroke,
+            stroke_fill=(0, 0, 0, 255),
+        )
+
+
+def render_from_exact_ref(
+    *,
+    donor_id: int,
+    receiver_id: int,
+    donor_name: str,
+    receiver_name: str,
+    amount: int,
+    tier: Optional[str] = None,
+    donor_avatar: Optional[Image.Image] = None,
+    receiver_avatar: Optional[Image.Image] = None,
+    **_ignored,
+) -> Image.Image:
+    """Exact reference photo + real Roblox headshots + @names only."""
+    resolved = resolve_tier(tier, amount)
+    src = REF_FILES[resolved]
+    if not src.is_file():
+        raise FileNotFoundError(f"missing exact ref for {resolved}: {src}")
+    canvas = Image.open(src).convert("RGBA")
+    donor_av = donor_avatar or fetch_headshot(int(donor_id))
+    recv_av = receiver_avatar or fetch_headshot(int(receiver_id))
+    _paste_circular_avatar(canvas, donor_av, REF_LEFT_C, REF_AVATAR_R)
+    _paste_circular_avatar(canvas, recv_av, REF_RIGHT_C, REF_AVATAR_R)
+    _cover_and_draw_names(canvas, donor_name, receiver_name, resolved)
+    return canvas
+
+
 def render_card_png_bytes(**kwargs) -> bytes:
-    """Serve the exact Hazem reference photos — no Pillow redraw of text/rings."""
-    amount = int(kwargs.get("amount") or 0)
-    tier = resolve_tier(kwargs.get("tier"), amount)
-    return load_exact_ref_png_bytes(tier)
+    """Live path: exact Nuke/Smite/Starfall photo + real avatars/names."""
+    img = render_from_exact_ref(**kwargs)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="PNG", optimize=False)
+    return buf.getvalue()
 
 
 if __name__ == "__main__":
