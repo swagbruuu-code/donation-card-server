@@ -47,22 +47,22 @@ RING_OUTER = 80
 RING_WIDTH = 7  # refs ~6–7px; was 10 (too thick)
 
 # Amount tracking (px added to each glyph advance).
-# Refs: nearly stroke-less Nuke/Smite; thin Starfall outline; tight tracking.
 AMOUNT_TRACKING = 0
+DONATED_TRACKING = 0
 
-# Font sizes — locked vs Hazem refs (trial I: best IoU on amount+donated crop)
+# Font sizes — Prompt ExtraBold (best overlay vs Hazem amount+donated)
 FONT_AMOUNT = 72
-FONT_DONATED = 53
+FONT_DONATED = 52
 FONT_NAME = 30
 DONATED_STROKE = 1
 NAME_STROKE = 2
 AMOUNT_STROKE = 0  # Nuke/Smite; Starfall uses +1 below
 AMOUNT_STROKE_STARFALL = 1
-ROBUX_SIZE = 62
-ROBUX_GAP = 10  # slightly tighter icon→digits vs prior 12
+ROBUX_SIZE = 60
+ROBUX_GAP = 10
 ROBUX_OUTLINE = 2
 
-# Vertical stack (amount / donated to / names)
+# Vertical stack
 AMOUNT_TOP = 53
 DONATED_TOP = 135
 NAME_TOP = 212
@@ -161,8 +161,22 @@ def load_font(
                 pass
         family = "prompt_extrabold"
 
-    # Amount uses Prompt ExtraBold (closest width/weight to Hazem refs)
-    if family in ("prompt_extrabold", "amount", "donated", "name", "fredoka"):
+    # Amount: Montserrat ExtraBold (~800) — clean geometric digits matching refs
+    if family in ("amount", "donated"):
+        path = (
+            _first_existing(_PROMPT_EXTRABOLD)
+            or _first_existing(_PROMPT_BLACK)
+            or _first_existing(_BARLOW_EXTRABOLD)
+            or _first_existing(_DEJAVU_BOLD)
+        )
+        if path:
+            try:
+                return ImageFont.truetype(path, size=size)
+            except OSError:
+                pass
+        family = "prompt_extrabold"
+
+    if family in ("prompt_extrabold", "name", "fredoka"):
         path = (
             _first_existing(_PROMPT_EXTRABOLD)
             or _first_existing(_PROMPT_BLACK)
@@ -492,7 +506,7 @@ def render_card(
 
     amount_text = format_amount(amount)
     font_amount = load_font(FONT_AMOUNT, family="amount")
-    font_donated = load_font(FONT_DONATED, family="prompt_extrabold")
+    font_donated = load_font(FONT_DONATED, family="donated")
     font_name = load_font(FONT_NAME, family="prompt_extrabold")
 
     aw = tracked_text_width(amount_text, font_amount, AMOUNT_TRACKING)
@@ -531,16 +545,18 @@ def render_card(
     )
 
     donated = "donated to"
+    dw = tracked_text_width(donated, font_donated, DONATED_TRACKING)
     db = draw.textbbox(
         (0, 0), donated, font=font_donated, stroke_width=DONATED_STROKE
     )
-    dw = db[2] - db[0]
     donated_top = DONATED_TOP
-    draw.text(
+    draw_text_tracked(
+        draw,
         ((CARD_W - dw) // 2, donated_top - db[1]),
         donated,
-        font=font_donated,
+        font_donated,
         fill=(*WHITE, 255),
+        tracking=DONATED_TRACKING,
         stroke_width=DONATED_STROKE,
         stroke_fill=(0, 0, 0, 255),
     )
