@@ -1,7 +1,9 @@
-"""Hazem-style dual-avatar donation card PNG generator.
+"""Donation card images for Discord.
 
-Canvas 1179×275 RGBA — opaque black plate (Discord-ready), bottom accent glow
-per tier. Layout locked to Hazem Nuke/Smite/Starfall reference cards.
+Live path: serve the exact Nuke/Smite/Starfall reference JPGs from assets/refs
+(no redraw). Legacy Pillow renderer kept below for offline experiments only.
+
+Canvas constants below are unused by the live exact-ref path.
 
 Fonts (sharp heavy geometric sans — Prompt):
   - Amount: Prompt ExtraBold + light black stroke
@@ -224,6 +226,43 @@ def parse_accent(tier: Optional[str], accent_hex: Optional[str]) -> Tuple[int, i
 
 def format_amount(amount: int) -> str:
     return f"{int(amount):,}"
+
+
+REF_DIR = Path(__file__).resolve().parent / "assets" / "refs"
+REF_FILES = {
+    "Nuke": REF_DIR / "nuke.jpg",
+    "Smite": REF_DIR / "smite.jpg",
+    "Starfall": REF_DIR / "starfall.jpg",
+}
+
+
+def resolve_tier(tier: Optional[str], amount: int) -> str:
+    """Pick Nuke / Smite / Starfall from explicit tier or amount thresholds."""
+    if tier:
+        t = str(tier).strip().title()
+        if t in REF_FILES:
+            return t
+    amt = int(amount or 0)
+    if amt >= 10_000_000:
+        return "Starfall"
+    if amt >= 1_000_000:
+        return "Smite"
+    return "Nuke"
+
+
+def load_exact_ref_png_bytes(tier: str) -> bytes:
+    """Return the user's exact reference photo as PNG bytes (no redraw).
+
+    JPEG pixels are re-encoded to PNG for Discord attachment compatibility;
+    no resize, crop, text, or avatar changes.
+    """
+    src = REF_FILES[tier]
+    if not src.is_file():
+        raise FileNotFoundError(f"missing exact ref for {tier}: {src}")
+    img = Image.open(src).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=False)
+    return buf.getvalue()
 
 
 def fetch_headshot(user_id: int, size: int = 420) -> Image.Image:
@@ -579,10 +618,10 @@ def render_card(
 
 
 def render_card_png_bytes(**kwargs) -> bytes:
-    img = render_card(**kwargs)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
-    return buf.getvalue()
+    """Serve the exact Hazem reference photos — no Pillow redraw of text/rings."""
+    amount = int(kwargs.get("amount") or 0)
+    tier = resolve_tier(kwargs.get("tier"), amount)
+    return load_exact_ref_png_bytes(tier)
 
 
 if __name__ == "__main__":
