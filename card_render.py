@@ -1,22 +1,17 @@
 """Hazem-style dual-avatar donation card PNG generator.
 
-Canvas 1179×275 RGBA — transparent base (no solid black plate), bottom accent
-glow only. Template-matched to research/references/exact_donation_card_ref.jpg
-(Discord light-theme screenshot of Starfall 10M; white→red is theme+glow, NOT
-an opaque white background).
+Canvas 1179×275 RGBA — opaque black plate (Discord-ready), bottom accent glow
+per tier. Layout locked to Hazem Nuke/Smite/Starfall reference cards.
 
-Fonts (sharp heavy geometric sans — NOT Fredoka):
-  - Amount: Prompt ExtraBold + black stroke (~3px, ref-matched)
-  - "donated to" / @usernames: Prompt ExtraBold + black stroke
+Fonts (sharp heavy geometric sans — Prompt):
+  - Amount: Prompt ExtraBold + light black stroke
+  - "donated to" / @usernames: Prompt Bold/ExtraBold + black stroke
   - Fallbacks: Prompt Black, Barlow ExtraBold, DejaVu Sans Bold
 
-White text ("donated to", @names) and red amount both use black stroke outlines.
-"donated to" is large (~40–50%+ of amount glyph height) on ALL tiers.
-
 Bottom glow:
-  - Starfall (10M): full-card bottom-weighted accent glow (ref-matched)
-  - Smite (1M): softer glow, slightly higher start
-  - Nuke: flat — no bottom glow (matches original 100k)
+  - Starfall (10M): stronger dark-red bottom gradient
+  - Smite (1M): soft hot-pink bottom band
+  - Nuke: flat — no bottom glow
 Footer is NOT drawn in the PNG — Discord embed.footer carries
   "Donated on • DD/MM/YYYY HH:MM AM/PM" (Europe/London)
 """
@@ -30,10 +25,10 @@ from typing import Optional, Tuple
 import requests
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-# Template-matched to exact_donation_card_ref.jpg (1179×275)
+# Template-matched to Hazem refs (scaled 2816×704 → 1179×≈295, cropped to 275)
 CARD_W = 1179
 CARD_H = 275
-BG = (0, 0, 0, 0)  # fully transparent RGBA base (no solid black/white plate)
+BG = (0, 0, 0, 255)  # opaque black plate matching refs / Discord cards
 WHITE = (253, 253, 253)  # #FDFDFD
 
 TIER_ACCENTS = {
@@ -44,34 +39,35 @@ TIER_ACCENTS = {
 
 GLOW_TIERS = {"Smite", "Starfall"}
 
-# Layout measured from exact_donation_card_ref.jpg
-LEFT_C = (224, 104)
-RIGHT_C = (955, 104)
-AVATAR_R = 72
-RING_OUTER = 82
-RING_WIDTH = 10
+# Layout measured from Hazem refs (isotropic width scale)
+LEFT_C = (226, 107)
+RIGHT_C = (955, 107)
+AVATAR_R = 73
+RING_OUTER = 80
+RING_WIDTH = 7  # refs ~6–7px; was 10 (too thick)
 
 # Amount tracking (px added to each glyph advance).
-# Prompt ExtraBold @76 / stroke 3 needs slight NEGATIVE tracking to match REF.
-AMOUNT_TRACKING = 0
+AMOUNT_TRACKING = 2
 
-# Font sizes — Prompt ExtraBold for ALL text (sharp heavy sans, not Fredoka).
-# Locked vs exact_donation_card_ref.jpg overlays:
-#   amount outer ≈73px; donated outer ≈46px; name outer ≈33px.
-#   amount stroke ≈3–4px (NOT 8); wdth normal (static face).
-FONT_AMOUNT = 71
-FONT_DONATED = 52
-FONT_NAME = 29
+# Font sizes — Prompt ExtraBold for amount (Inter was too condensed vs refs)
+FONT_AMOUNT = 70
+FONT_DONATED = 46
+FONT_NAME = 30
 DONATED_STROKE = 1
-NAME_STROKE = 3
-AMOUNT_STROKE = 3  # slightly thinner than REF lock
-ROBUX_SIZE = 64
+NAME_STROKE = 2
+AMOUNT_STROKE = 2
+ROBUX_SIZE = 62
+ROBUX_GAP = 12  # refs ~25px content gap; icon has transparent padding
 ROBUX_OUTLINE = 2
+
+# Vertical stack (amount / donated to / names)
+AMOUNT_TOP = 53
+DONATED_TOP = 136
+NAME_TOP = 212
 
 _FONTS_DIR = Path(__file__).resolve().parent / "fonts"
 _GOOGLE = Path("/usr/share/fonts/truetype/sand-box/google")
 
-# Primary: Prompt ExtraBold (closest glyph match to REF amount digits)
 _MONTSERRAT_VAR = [
     _FONTS_DIR / "Montserrat-VariableFont_wght.ttf",
     _GOOGLE / "Montserrat" / "Montserrat-VariableFont_wght.ttf",
@@ -129,21 +125,18 @@ def load_font(
     """Load a face.
 
     family:
-      - prompt_extrabold / amount / donated / name — Prompt ExtraBold (REF match)
+      - amount / prompt_extrabold / donated / name — Prompt ExtraBold (REF match)
       - prompt_black — heavier Prompt
       - prompt_bold / prompt_semibold — lighter Prompt
       - barlow_extrabold / barlow_bold — fallback thick sans
       - dejavu_bold / dejavu — system fallbacks
     """
-    if family in ("inter_black", "montserrat_black", "amount"):
-        # Amount: Inter (wght=750) — slightly thinner — sharp sans; REF '1' has no foot (Montserrat does)
-        # axes: Optical Size, Weight
+    if family in ("inter_black", "montserrat_black"):
         path = _first_existing(_INTER_VAR)
         if path:
             try:
                 font = ImageFont.truetype(path, size=size)
                 try:
-                    # Inter variable: opsz, wght
                     font.set_variation_by_axes([14, 750])
                 except OSError:
                     try:
@@ -153,7 +146,6 @@ def load_font(
                 return font
             except OSError:
                 pass
-        # fallback Montserrat Black
         path = _first_existing(_MONTSERRAT_VAR)
         if path:
             try:
@@ -167,7 +159,8 @@ def load_font(
                 pass
         family = "prompt_extrabold"
 
-    if family in ("prompt_extrabold", "donated", "name", "fredoka"):
+    # Amount uses Prompt ExtraBold (closest width/weight to Hazem refs)
+    if family in ("prompt_extrabold", "amount", "donated", "name", "fredoka"):
         path = (
             _first_existing(_PROMPT_EXTRABOLD)
             or _first_existing(_PROMPT_BLACK)
@@ -324,33 +317,31 @@ def draw_bottom_glow(
     *,
     strength: float = 1.0,
     start_y: int = 50,
+    exp: float = 1.15,
+    blur: int = 3,
 ) -> None:
-    """Bottom-weighted accent glow on a transparent canvas.
+    """Bottom-weighted accent glow over opaque black.
 
-    Draws semi-transparent accent rows (alpha ramp), not an opaque plate.
-    Starfall: start_y≈45 (full fade up the card, peak alpha ≈150).
-    Smite: start_y near the bottom only (softer band).
+    Starfall: higher peak, starts mid-card (dark red wash).
+    Smite: softer peak, confined near bottom.
     """
     glow = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     ar, ag, ab = accent
-    # Reference Starfall PNG: alpha 0→~150, RGB stays near accent red
-    peak_a = 150.0 * float(strength)
+    peak_a = 255.0 * float(strength)
     start_y = int(max(0, min(CARD_H - 2, start_y)))
     denom = float(max(1, CARD_H - 1 - start_y))
     for y in range(CARD_H):
         if y < start_y:
             continue
         t = (y - start_y) / denom
-        v = t ** 1.05
+        v = t ** float(exp)
         a = int(round(peak_a * v))
         if a <= 0:
             continue
-        # Slight warm lift toward bottom (matches ref mid/bot samples)
-        g = min(255, int(ag + 8 * v))
-        b = min(255, int(ab + 4 * v))
-        gd.line([(0, y), (CARD_W, y)], fill=(ar, g, b, min(255, a)))
-    glow = glow.filter(ImageFilter.GaussianBlur(2))
+        gd.line([(0, y), (CARD_W, y)], fill=(ar, ag, ab, min(255, a)))
+    if blur > 0:
+        glow = glow.filter(ImageFilter.GaussianBlur(blur))
     canvas.alpha_composite(glow)
 
 
@@ -361,26 +352,35 @@ def _tier_wants_glow(tier: Optional[str]) -> bool:
 
 
 def _glow_strength(tier: Optional[str]) -> float:
+    """Peak alpha as fraction of 255, tuned to ref bottom samples."""
     if not tier:
-        return 1.0
+        return 0.45
     t = tier.strip().title()
     if t == "Smite":
-        return 0.40  # lighter 1M fade
+        return 0.135  # ref bottom ~ (32,0,16) on black
     if t == "Nuke":
-        return 0.85  # medium — same style family, accent differs
-    return 1.0  # Starfall
+        return 0.0
+    return 0.43  # Starfall ref bottom ~ (110,0,0)
 
 
 def _glow_start_y(tier: Optional[str]) -> int:
-    """Starfall: full fade from ~y40. Smite/Nuke: start a bit lower (softer band)."""
     if not tier:
-        return 40
+        return 100
     t = tier.strip().title()
     if t == "Smite":
-        return int(CARD_H * 0.72)  # confine Smite glow near bottom
+        return 200  # soft band near bottom only
     if t == "Nuke":
-        return int(CARD_H * 0.45)
-    return 40  # Starfall — fade begins near top padding (H=275 ref)
+        return CARD_H
+    return 85  # Starfall — fade begins mid/upper
+
+
+def _glow_exp(tier: Optional[str]) -> float:
+    if not tier:
+        return 1.15
+    t = tier.strip().title()
+    if t == "Smite":
+        return 1.45
+    return 1.05
 
 
 def tracked_text_width(text: str, font: ImageFont.ImageFont, tracking: float) -> float:
@@ -445,12 +445,19 @@ def render_card(
     **_ignored,
 ) -> Image.Image:
     accent = parse_accent(tier, accent_hex)
-    # Transparent base — only content + bottom accent glow have alpha
+    # Opaque black plate — matches Hazem refs / Discord dark cards
     canvas = Image.new("RGBA", (CARD_W, CARD_H), BG)
 
     # Bottom glow: Starfall full fade; Smite soft bottom-only; Nuke none.
     if _tier_wants_glow(tier):
-        draw_bottom_glow(canvas, accent, strength=_glow_strength(tier), start_y=_glow_start_y(tier))
+        draw_bottom_glow(
+            canvas,
+            accent,
+            strength=_glow_strength(tier),
+            start_y=_glow_start_y(tier),
+            exp=_glow_exp(tier),
+            blur=3,
+        )
 
     donor_av = donor_avatar or fetch_headshot(int(donor_id))
     recv_av = receiver_avatar or fetch_headshot(int(receiver_id))
@@ -458,19 +465,7 @@ def render_card(
     for av, center in ((donor_av, LEFT_C), (recv_av, RIGHT_C)):
         cx, cy = center
 
-        bloom_r = RING_OUTER + 6
-        bloom = Image.new("RGBA", (bloom_r * 2, bloom_r * 2), (0, 0, 0, 0))
-        bd = ImageDraw.Draw(bloom)
-        for i, alpha in enumerate((28, 16, 8)):
-            inset = i * 3
-            bd.ellipse(
-                (inset, inset, bloom_r * 2 - 1 - inset, bloom_r * 2 - 1 - inset),
-                outline=(*accent, alpha),
-                width=5,
-            )
-        bloom = bloom.filter(ImageFilter.GaussianBlur(5))
-        canvas.alpha_composite(bloom, (cx - bloom_r, cy - bloom_r))
-
+        # Thin solid ring only (no outer bloom — refs are crisp)
         pad = 2
         ring = Image.new(
             "RGBA",
@@ -495,7 +490,7 @@ def render_card(
 
     amount_text = format_amount(amount)
     font_amount = load_font(FONT_AMOUNT, family="amount")
-    font_donated = load_font(FONT_DONATED, family="prompt_semibold")
+    font_donated = load_font(FONT_DONATED, family="prompt_bold")
     font_name = load_font(FONT_NAME, family="prompt_extrabold")
 
     aw = tracked_text_width(amount_text, font_amount, AMOUNT_TRACKING)
@@ -503,12 +498,11 @@ def render_card(
     glyph_h = bbox[3] - bbox[1]
 
     robux_size = ROBUX_SIZE
-    gap = 4
+    gap = ROBUX_GAP
     pair_w = robux_size + gap + aw
     pair_left = (CARD_W - int(round(pair_w))) // 2
 
-    # Extra top padding vs original 86 — breathing room from top edge
-    amount_top = 47
+    amount_top = AMOUNT_TOP
     amount_y = amount_top - bbox[1]
     glyph_cy = amount_top + glyph_h / 2.0
 
@@ -538,8 +532,7 @@ def render_card(
         (0, 0), donated, font=font_donated, stroke_width=DONATED_STROKE
     )
     dw = db[2] - db[0]
-    # Shifted with amount (+12) for top padding
-    donated_top = 132
+    donated_top = DONATED_TOP
     draw.text(
         ((CARD_W - dw) // 2, donated_top - db[1]),
         donated,
@@ -549,7 +542,7 @@ def render_card(
         stroke_fill=(0, 0, 0, 255),
     )
 
-    name_top = 204
+    name_top = NAME_TOP
     for name, cx in ((donor_name, LEFT_C[0]), (receiver_name, RIGHT_C[0])):
         label = name if name.startswith("@") else f"@{name}"
         nb = draw.textbbox((0, 0), label, font=font_name, stroke_width=NAME_STROKE)
@@ -563,7 +556,6 @@ def render_card(
             stroke_fill=(0, 0, 0, 255),
         )
 
-    # Keep RGBA so Discord/PNG alpha (transparent corners + glow) is preserved
     return canvas
 
 
