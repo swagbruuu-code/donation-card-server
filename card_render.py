@@ -8,10 +8,9 @@ Canvas constants below are unused by the live exact-ref path.
 Fonts:
   - Amount / "donated to" (legacy path): Prompt ExtraBold
   - @usernames (exact-ref path):
-      * Exact @swagbruuu / swagbruuu → whole sticker PNG (pixel-identical)
-      * Every other name → exact sticker @ cutout + Plus Jakarta ExtraBold
-        letters scaled to sticker *fill* height (not full outline) with
-        tight tracking so size/density match the sticker cutout.
+      * Every name (incl. swagbruuu) → exact sticker @ cutout + Plus Jakarta
+        ExtraBold letters scaled to sticker *fill* height (not full outline)
+        with tight tracking so size/density match across all usernames.
   - Fallbacks: Montserrat ExtraBold, Prompt, Barlow, DejaVu
 
 Bottom glow:
@@ -772,7 +771,7 @@ REF_STICKER_TARGET_H = 94  # full sticker incl. outer bubble; fits REF_NAME_BAND
 # Font letters must match sticker *fill* height, not full outline height.
 # Glyph content/fill spans ~314 of the 392 native canvas → ~75 at target_h.
 REF_NAME_LETTER_H = round(REF_STICKER_TARGET_H * 314 / REF_STICKER_NATIVE_H)  # 75
-# Non-exact usernames: Plus Jakarta ExtraBold @ sticker fill scale + tight track.
+# All usernames: Plus Jakarta ExtraBold @ sticker fill scale + tight track.
 REF_NAME_FONT = 58
 REF_NAME_STROKE = 3
 # Tight tracking to match sticker letter density (was +7 → looked spaced-out
@@ -979,11 +978,6 @@ def _normalize_username(name: str) -> str:
     return s if s.startswith("@") else f"@{s}"
 
 
-def _is_exact_swagbruuu(label: str) -> bool:
-    core = label[1:] if label.startswith("@") else label
-    return core.lower() == "swagbruuu"
-
-
 def _scale_rgba(img: Image.Image, target_h: int) -> Image.Image:
     if img.size[1] == target_h:
         return img
@@ -1067,19 +1061,13 @@ def _compose_sticker_username(
     target_h: int = REF_STICKER_TARGET_H,
     letter_h: int | None = None,
 ) -> Image.Image:
-    """Username sprite.
+    """Username sprite — one path for every name (incl. swagbruuu).
 
-    - Exact @swagbruuu → whole sticker PNG (pixel-identical).
-    - Every other name → EXACT sticker @ cutout + font letters (no font @).
-      Font letters scale to sticker *fill* height (letter_h), not full outline
-      height, and use tight tracking so size/density match the sticker.
+    Exact sticker @ cutout + Plus Jakarta ExtraBold letters (no font @).
+    Font letters scale to sticker *fill* height (letter_h), not full outline
+    height, with tight tracking so size/density match across all usernames.
     """
     glyphs = _load_sticker_glyphs()
-
-    if _is_exact_swagbruuu(label):
-        full = glyphs.get("_full")
-        if full is not None:
-            return _scale_rgba(full, target_h)
 
     if "@" not in glyphs:
         raise RuntimeError("exact sticker @ glyph missing — refuse font @")
@@ -1094,8 +1082,7 @@ def _compose_sticker_username(
     at_img = _scale_rgba(at_sprite, target_h)
     core = label[1:] if label.startswith("@") else label
     name_img = _compose_font_name_only(core)
-    # Match sticker letter *fill* height — NOT full outline (that made names
-    # look oversized vs the swagbruuu cutout).
+    # Match sticker letter *fill* height — NOT full outline.
     if name_img.size[1] != letter_h:
         name_img = _scale_rgba(name_img, letter_h)
 
