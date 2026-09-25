@@ -9,9 +9,9 @@ Fonts:
   - Amount / "donated to" (legacy path): Prompt ExtraBold
   - @usernames (exact-ref path):
       * Exact @swagbruuu / swagbruuu → whole sticker PNG (pixel-identical)
-      * Every other name → one Plus Jakarta Sans ExtraBold draw pass
-        (white fill + black stroke, Roblox casing preserved). No
-        letter-by-letter sticker glyph assembly.
+      * Every other name → exact sticker @ cutout + Plus Jakarta ExtraBold
+        letters scaled to sticker *fill* height (not full outline) with
+        tight tracking so size/density match the sticker cutout.
   - Fallbacks: Montserrat ExtraBold, Prompt, Barlow, DejaVu
 
 Bottom glow:
@@ -768,13 +768,17 @@ REF_NAME_HALF_W = 400
 # Exact @swagbruuu sticker is native ~392px tall (full outline). Scale so
 # letter fill (~270px) matches baked User fill (~65px) on 2816-wide cards.
 REF_STICKER_NATIVE_H = 392
-REF_STICKER_TARGET_H = 94  # ~65px fill after scale; fits REF_NAME_BAND
-# Non-exact usernames: single-pass Plus Jakarta ExtraBold (not sticker glyphs).
+REF_STICKER_TARGET_H = 94  # full sticker incl. outer bubble; fits REF_NAME_BAND
+# Font letters must match sticker *fill* height, not full outline height.
+# Glyph content/fill spans ~314 of the 392 native canvas → ~75 at target_h.
+REF_NAME_LETTER_H = round(REF_STICKER_TARGET_H * 314 / REF_STICKER_NATIVE_H)  # 75
+# Non-exact usernames: Plus Jakarta ExtraBold @ sticker fill scale + tight track.
 REF_NAME_FONT = 58
 REF_NAME_STROKE = 3
-# Stroke-aware positive tracking so black outlines do not smash.
-# (Avoid negative / sticker-style overlap — that caused ghost outlines.)
-REF_NAME_TRACKING = 7
+# Tight tracking to match sticker letter density (was +7 → looked spaced-out
+# once letters were wrongly upscaled to full outline height). Slightly
+# negative so fills nearly touch like the cutout (avoid < -4 ghosting).
+REF_NAME_TRACKING = -2
 
 _GLYPHS_DIR = Path(__file__).resolve().parent / "assets" / "glyphs"
 _STICKER_REF_JPG = (
@@ -1061,11 +1065,14 @@ def _compose_font_name_only(
 def _compose_sticker_username(
     label: str,
     target_h: int = REF_STICKER_TARGET_H,
+    letter_h: int | None = None,
 ) -> Image.Image:
     """Username sprite.
 
     - Exact @swagbruuu → whole sticker PNG (pixel-identical).
     - Every other name → EXACT sticker @ cutout + font letters (no font @).
+      Font letters scale to sticker *fill* height (letter_h), not full outline
+      height, and use tight tracking so size/density match the sticker.
     """
     glyphs = _load_sticker_glyphs()
 
@@ -1077,15 +1084,22 @@ def _compose_sticker_username(
     if "@" not in glyphs:
         raise RuntimeError("exact sticker @ glyph missing — refuse font @")
 
+    if letter_h is None:
+        letter_h = REF_NAME_LETTER_H
+    # Keep letter_h proportional if caller overrides target_h.
+    if target_h != REF_STICKER_TARGET_H:
+        letter_h = max(1, int(round(target_h * 314 / REF_STICKER_NATIVE_H)))
+
     at_sprite, _adv, _bear = glyphs["@"]
     at_img = _scale_rgba(at_sprite, target_h)
     core = label[1:] if label.startswith("@") else label
     name_img = _compose_font_name_only(core)
-    # Match letter height to sticker @ height so the row looks even.
-    if name_img.size[1] != target_h:
-        name_img = _scale_rgba(name_img, target_h)
+    # Match sticker letter *fill* height — NOT full outline (that made names
+    # look oversized vs the swagbruuu cutout).
+    if name_img.size[1] != letter_h:
+        name_img = _scale_rgba(name_img, letter_h)
 
-    gap = max(2, int(round(target_h * 0.02)))  # slight gap; outlines should not smash
+    gap = max(1, int(round(target_h * 0.015)))
     total_w = at_img.size[0] + gap + name_img.size[0]
     total_h = max(at_img.size[1], name_img.size[1])
     canvas = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
