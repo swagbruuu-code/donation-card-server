@@ -23,14 +23,14 @@ REFS = ROOT / "assets" / "refs"
 
 ACCENT = {
     "nuke": (255, 0, 220),
-    "smite": (255, 0, 130),
+    "smite": (220, 60, 145),  # muted pink; less neon than the source accent
     "starfall": (255, 10, 0),
 }
 
 # Synthetic soft glow (replaces speckled JPG fade). strength ≈ peak alpha/255
 # tuned so on-black appearance ≈ Hazem JPG bottom samples.
 FADE = {
-    "smite": dict(start_y=460, strength=0.34, exp=1.25, blur=12),
+    "smite": dict(start_y=460, strength=0.28, exp=1.25, blur=12),
     "starfall": dict(start_y=240, strength=0.55, exp=1.05, blur=10),
 }
 
