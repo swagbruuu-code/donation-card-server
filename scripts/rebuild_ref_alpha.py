@@ -2,33 +2,39 @@
 """Rebuild assets/refs/{nuke,smite,starfall}.png from JPGs.
 
 Goals:
-  - Outer void transparent (edge-flood near-black, tint-protected)
+  - Outer void transparent (near-black keyed globally — incl. enclosed glyph
+    counters so amount 0-holes and "donated to" counters are not black plates)
   - Placeholder User/@User erased BEFORE keying (avoids chewed name-band)
   - Smite/Starfall: soft accent bottom glow WITHOUT JPEG-noise chew holes
-    (replace noisy JPG fade with a smooth synthetic gradient matched to
-    Hazem on-black brightness)
+    (replace noisy JPG fade with a smooth synthetic gradient)
   - Nuke: no bottom glow
-  - Hot content (rings, amount, avatars, white text) stays opaque JPG RGB
+  - Hot content (rings, amount glyphs, avatars, white text) stays opaque JPG RGB
+
+Why global void (not edge-flood): JPEG amount/"donated to" sit on black. Edge
+flood cannot reach enclosed counters (0, o, a, e, d). Weak magenta JPEG noise
+inside those counters was also tint-protected and stayed as opaque black plates
+once the outer void went transparent. Near-black is void even if weakly tinted;
+real fade is mid-bright tint and is replaced by synth_fade for Smite/Starfall.
 """
 from __future__ import annotations
 
-from collections import deque
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
 REFS = ROOT / "assets" / "refs"
 
 ACCENT = {
     "nuke": (255, 0, 220),
-    "smite": (220, 60, 145),  # muted pink; less neon than the source accent
+    # Original Smite hue — mute via FADE strength only, never recolor.
+    "smite": (255, 0, 130),
     "starfall": (255, 10, 0),
 }
 
 # Synthetic soft glow (replaces speckled JPG fade). strength ≈ peak alpha/255
-# tuned so on-black appearance ≈ Hazem JPG bottom samples.
+# Smite: same hue, lower strength than original 0.34 so it stands out less.
 FADE = {
     "smite": dict(start_y=460, strength=0.28, exp=1.25, blur=12),
     "starfall": dict(start_y=240, strength=0.55, exp=1.05, blur=10),
@@ -78,7 +84,7 @@ def classify(jpg: np.ndarray):
     mx = jpg.max(2)
     mn = jpg.min(2)
     sat = mx - mn
-    # Broad tint so dark maroon/pink fade is never void-keyed
+    # Broad tint used for fade strip / hot content; NOT used to protect near-black.
     red_dom = (R >= G + 4) & (R >= B) & (R >= 6)
     mag_dom = (R >= G + 8) & (B >= G + 8) & (np.maximum(R, B) >= 20)
     tint = red_dom | mag_dom
@@ -87,39 +93,33 @@ def classify(jpg: np.ndarray):
     is_avatarish = (~tint) & (mx >= 28) & (sat >= 8)
     is_bright = mx >= 175
     is_content = is_white | is_hot | is_avatarish | is_bright
-    return tint, is_content, mx, sat, R
+    return tint, is_content, mx, sat, is_white, is_hot
 
 
-def edge_void(jpg, tint, is_content):
-    mx = jpg.max(2)
-    sat = mx - jpg.min(2)
-    is_void_cand = (((mx <= 16) & (sat <= 8)) | (mx <= 5)) & ~tint
-    h, w = mx.shape
-    visited = np.zeros((h, w), dtype=bool)
-    q = deque()
-    for x in range(w):
-        for y in (0, h - 1):
-            if is_void_cand[y, x]:
-                visited[y, x] = True
-                q.append((y, x))
-    for y in range(h):
-        for x in (0, w - 1):
-            if is_void_cand[y, x] and not visited[y, x]:
-                visited[y, x] = True
-                q.append((y, x))
-    while q:
-        y, x = q.popleft()
-        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            ny, nx = y + dy, x + dx
-            if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx] and is_void_cand[ny, nx]:
-                visited[ny, nx] = True
-                q.append((ny, nx))
-    is_void = visited & ~is_content & ~tint
-    # Close tiny void speckles inside solid
-    solid = Image.fromarray(((~is_void).astype(np.uint8) * 255), "L")
-    solid = solid.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))
-    is_void = (np.array(solid) == 0) & ~is_content & ~tint
-    return is_void
+def content_void(mx, sat, is_content):
+    """Global near-black → transparent (clears enclosed 0 / letter counters).
+
+    Unlike edge-flood, this reaches holes inside glyphs. Weak magenta JPEG
+    noise in those holes is included (near-black, not mid-bright fade).
+    """
+    near_black = ((mx <= 28) & (sat <= 36)) | (mx <= 12)
+    return near_black & ~is_content
+
+
+def strip_text_fringe(out, jpg, is_content, is_white, is_hot):
+    """Clear residual dark stroke/plate halo around amount + donated glyphs."""
+    textish = is_white | is_hot
+    timg = Image.fromarray((textish.astype(np.uint8) * 255), "L")
+    for _ in range(3):
+        timg = timg.filter(ImageFilter.MaxFilter(11))
+    near_text = np.array(timg) > 0
+    fringe = (
+        near_text
+        & ~is_content
+        & (out[:, :, 3] > 0)
+        & (out[:, :, :3].max(2) < 100)
+    )
+    out[fringe] = 0
 
 
 def synth_fade(h, w, accent, start_y, strength, exp, blur):
@@ -147,14 +147,15 @@ def synth_fade(h, w, accent, start_y, strength, exp, blur):
 def rebuild(tier: str) -> Image.Image:
     jpg0 = np.array(Image.open(REFS / f"{tier}.jpg").convert("RGB"), dtype=np.float32)
     jpg = erase_names(jpg0)
-    tint, is_content, mx, sat, R = classify(jpg)
-    is_void = edge_void(jpg, tint, is_content)
+    tint, is_content, mx, sat, is_white, is_hot = classify(jpg)
+    is_void = content_void(mx, sat, is_content)
 
     h, w = mx.shape
     out = np.zeros((h, w, 4), dtype=np.float32)
     out[:, :, :3] = jpg
     out[:, :, 3] = 255
     out[is_void] = 0
+    strip_text_fringe(out, jpg, is_content, is_white, is_hot)
 
     if tier in FADE:
         cfg = FADE[tier]
@@ -204,6 +205,7 @@ def main() -> None:
             f"{tier}: wrote {dest.name} A0={(a==0).mean()*100:.1f}% "
             f"soft={((a>0)&(a<255)).mean()*100:.1f}% "
             f"bot={arr[h-5, w//2].tolist()} y580={arr[580, w//2].tolist()} "
+            f"accent={ACCENT[tier]} "
             f"corners={[int(a[0,0]), int(a[0,-1]), int(a[-1,0]), int(a[-1,-1])]}"
         )
 
