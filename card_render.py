@@ -769,8 +769,9 @@ REF_NAME_HALF_W = 400
 REF_STICKER_NATIVE_H = 392
 REF_STICKER_TARGET_H = 94  # full sticker incl. outer bubble; fits REF_NAME_BAND
 # Font letters must match sticker *fill* height, not full outline height.
-# Glyph content/fill spans ~314 of the 392 native canvas → ~75 at target_h.
-REF_NAME_LETTER_H = round(REF_STICKER_TARGET_H * 314 / REF_STICKER_NATIVE_H)  # 75
+# Stable sticker letter fills span ~270 of the 392 native canvas → ~65 at target_h;
+# this is the measured on-card height of the original whole-sticker word.
+REF_NAME_LETTER_H = round(REF_STICKER_TARGET_H * 270 / REF_STICKER_NATIVE_H)  # 65
 # All usernames: Plus Jakarta ExtraBold @ sticker fill scale + tight track.
 REF_NAME_FONT = 58
 REF_NAME_STROKE = 3
@@ -1064,8 +1065,9 @@ def _compose_sticker_username(
     """Username sprite — one path for every name (incl. swagbruuu).
 
     Exact sticker @ cutout + Plus Jakarta ExtraBold letters (no font @).
-    Font letters scale to sticker *fill* height (letter_h), not full outline
-    height, with tight tracking so size/density match across all usernames.
+    Font letters scale to the measured classic-sticker fill height (letter_h),
+    not the full outline height, with tight tracking so every username matches
+    the original @swagbruuu paste size.
     """
     glyphs = _load_sticker_glyphs()
 
