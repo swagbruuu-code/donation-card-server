@@ -230,9 +230,9 @@ def format_amount(amount: int) -> str:
 
 REF_DIR = Path(__file__).resolve().parent / "assets" / "refs"
 REF_FILES = {
-    "Nuke": REF_DIR / "nuke.jpg",
-    "Smite": REF_DIR / "smite.jpg",
-    "Starfall": REF_DIR / "starfall.jpg",
+    "Nuke": REF_DIR / "nuke.png",
+    "Smite": REF_DIR / "smite.png",
+    "Starfall": REF_DIR / "starfall.png",
 }
 
 
@@ -253,13 +253,13 @@ def resolve_tier(tier: Optional[str], amount: int) -> str:
 def load_exact_ref_png_bytes(tier: str) -> bytes:
     """Return the user's exact reference photo as PNG bytes (no redraw).
 
-    JPEG pixels are re-encoded to PNG for Discord attachment compatibility;
+    Exact-ref PNG (transparent void + soft accent fades) for Discord;
     no resize, crop, text, or avatar changes.
     """
     src = REF_FILES[tier]
     if not src.is_file():
         raise FileNotFoundError(f"missing exact ref for {tier}: {src}")
-    img = Image.open(src).convert("RGB")
+    img = Image.open(src).convert("RGBA")
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=False)
     return buf.getvalue()
@@ -678,10 +678,12 @@ def _erase_placeholder_names(canvas: Image.Image, cx: int) -> None:
             if samples:
                 bg = np.median(np.concatenate(samples, axis=0), axis=0)
             else:
-                bg = np.array([0, 0, 0, 255], dtype=np.float64)
+                bg = np.array([0, 0, 0, 0], dtype=np.float64)
         region[row][m] = bg
     arr[y0:y1, x0:x1] = region
-    canvas.paste(Image.fromarray(arr))
+    # Force full overwrite (Pillow otherwise uses alpha as mask and skips A=0).
+    out = Image.fromarray(arr)
+    canvas.paste(out, (0, 0), Image.new("L", out.size, 255))
 
 
 def _cover_and_draw_names(
@@ -742,7 +744,7 @@ def render_card_png_bytes(**kwargs) -> bytes:
     """Live path: exact Nuke/Smite/Starfall photo + real avatars/names."""
     img = render_from_exact_ref(**kwargs)
     buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="PNG", optimize=False)
+    img.convert("RGBA").save(buf, format="PNG", optimize=False)
     return buf.getvalue()
 
 
