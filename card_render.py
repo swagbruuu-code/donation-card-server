@@ -5,10 +5,14 @@ Live path: serve the exact Nuke/Smite/Starfall reference JPGs from assets/refs
 
 Canvas constants below are unused by the live exact-ref path.
 
-Fonts (sharp heavy geometric sans — Prompt):
-  - Amount: Prompt ExtraBold + light black stroke
-  - "donated to" / @usernames: Prompt Bold/ExtraBold + black stroke
-  - Fallbacks: Prompt Black, Barlow ExtraBold, DejaVu Sans Bold
+Fonts:
+  - Amount / "donated to" (legacy path): Prompt ExtraBold
+  - @usernames (exact-ref path):
+      * Exact @swagbruuu / swagbruuu → whole sticker PNG (pixel-identical)
+      * Every other name → one Plus Jakarta Sans ExtraBold draw pass
+        (white fill + black stroke, Roblox casing preserved). No
+        letter-by-letter sticker glyph assembly.
+  - Fallbacks: Montserrat ExtraBold, Prompt, Barlow, DejaVu
 
 Bottom glow:
   - Starfall (10M): stronger dark-red bottom gradient
@@ -25,7 +29,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import requests
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 # Template-matched to Hazem refs (scaled 2816×704 → 1179×≈295, cropped to 275)
 CARD_W = 1179
@@ -80,6 +84,18 @@ _INTER_VAR = [
     _FONTS_DIR / "Inter-VariableFont_opsz,wght.ttf",
     _GOOGLE / "Inter" / "Inter-VariableFont_opsz,wght.ttf",
 ]
+_MANROPE_VAR = [
+    _FONTS_DIR / "Manrope-VariableFont_wght.ttf",
+    _GOOGLE / "Manrope" / "Manrope-VariableFont_wght.ttf",
+]
+_PLUS_JAKARTA_VAR = [
+    _FONTS_DIR / "PlusJakartaSans-VariableFont_wght.ttf",
+    _GOOGLE / "Plus Jakarta Sans" / "PlusJakartaSans-VariableFont_wght.ttf",
+]
+_RALEWAY_VAR = [
+    _FONTS_DIR / "Raleway-VariableFont_wght.ttf",
+    _GOOGLE / "Raleway" / "Raleway-VariableFont_wght.ttf",
+]
 _PROMPT_EXTRABOLD = [
     _FONTS_DIR / "Prompt-ExtraBold.ttf",
     _GOOGLE / "Prompt" / "Prompt-ExtraBold.ttf",
@@ -125,16 +141,107 @@ def load_font(
     size: int,
     *,
     family: str = "prompt_extrabold",
+    weight: int | None = None,
 ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Load a face.
 
     family:
-      - amount / prompt_extrabold / donated / name — Prompt ExtraBold (REF match)
+      - plus_jakarta / name — Plus Jakarta Sans (default ExtraBold / wght 800)
+      - raleway — Raleway (default SemiBold / wght 550) — thin-ring @ glyph
+      - amount / prompt_extrabold / donated — Prompt ExtraBold
       - prompt_black — heavier Prompt
       - prompt_bold / prompt_semibold — lighter Prompt
       - barlow_extrabold / barlow_bold — fallback thick sans
       - dejavu_bold / dejavu — system fallbacks
+
+    weight: optional variable-axis wght override (e.g. 550 for @, 800 for letters).
     """
+    if family in (
+        "plus_jakarta",
+        "plus_jakarta_extrabold",
+        "name",
+        "manrope",  # legacy alias → Plus Jakarta
+        "manrope_extrabold",
+    ):
+        # Plus Jakarta Sans — letters match @iamEvanRBLX ref (square i-dot)
+        path = _first_existing(_PLUS_JAKARTA_VAR)
+        wght = int(weight) if weight is not None else 800
+        if path:
+            try:
+                font = ImageFont.truetype(path, size=size)
+                try:
+                    if wght >= 800:
+                        font.set_variation_by_name("ExtraBold")
+                    elif wght >= 700:
+                        font.set_variation_by_name("Bold")
+                    elif wght >= 600:
+                        font.set_variation_by_name("SemiBold")
+                    elif wght >= 500:
+                        font.set_variation_by_name("Medium")
+                    else:
+                        font.set_variation_by_axes([wght])
+                except OSError:
+                    try:
+                        font.set_variation_by_axes([wght])
+                    except OSError:
+                        try:
+                            font.set_variation_by_name("ExtraBold")
+                        except OSError:
+                            try:
+                                font.set_variation_by_axes([800])
+                            except OSError:
+                                pass
+                return font
+            except OSError:
+                pass
+        # geometric fallbacks
+        for var_paths, axes in (
+            (_MONTSERRAT_VAR, [wght]),
+            (_MANROPE_VAR, [wght]),
+            (_INTER_VAR, [14, wght]),
+        ):
+            path = _first_existing(var_paths)
+            if not path:
+                continue
+            try:
+                font = ImageFont.truetype(path, size=size)
+                try:
+                    font.set_variation_by_axes(axes)
+                except OSError:
+                    try:
+                        font.set_variation_by_axes([axes[-1]])
+                    except OSError:
+                        pass
+                return font
+            except OSError:
+                pass
+        family = "prompt_extrabold"
+
+    if family in ("raleway", "raleway_at"):
+        # Raleway — ExtraBold @ has a thin outer ring (ref match). Used for '@' only.
+        path = _first_existing(_RALEWAY_VAR)
+        wght = int(weight) if weight is not None else 550
+        if path:
+            try:
+                font = ImageFont.truetype(path, size=size)
+                try:
+                    font.set_variation_by_axes([wght])
+                except OSError:
+                    try:
+                        if wght >= 700:
+                            font.set_variation_by_name("Bold")
+                        elif wght >= 600:
+                            font.set_variation_by_name("SemiBold")
+                        else:
+                            font.set_variation_by_name("Medium")
+                    except OSError:
+                        pass
+                return font
+            except OSError:
+                pass
+        # fall back to Plus Jakarta at same weight if Raleway missing
+        return load_font(size, family="plus_jakarta", weight=wght)
+
     if family in ("inter_black", "montserrat_black"):
         path = _first_existing(_INTER_VAR)
         if path:
@@ -178,7 +285,7 @@ def load_font(
                 pass
         family = "prompt_extrabold"
 
-    if family in ("prompt_extrabold", "name", "fredoka"):
+    if family in ("prompt_extrabold", "fredoka"):
         path = (
             _first_existing(_PROMPT_EXTRABOLD)
             or _first_existing(_PROMPT_BLACK)
@@ -253,7 +360,7 @@ def resolve_tier(tier: Optional[str], amount: int) -> str:
 def load_exact_ref_png_bytes(tier: str) -> bytes:
     """Return the user's exact reference photo as PNG bytes (no redraw).
 
-    Exact-ref PNG (transparent void + soft accent fades) for Discord;
+    JPEG pixels are re-encoded to PNG for Discord attachment compatibility;
     no resize, crop, text, or avatar changes.
     """
     src = REF_FILES[tier]
@@ -619,15 +726,104 @@ def render_card(
 
 # Exact-ref canvas geometry (2816×704). Rings/amount/"donated to"/glow stay
 # as in the user's photo; only Roblox headshots + @names are composited on.
-REF_LEFT_C = (540, 280)
+# Defaults (Nuke/Smite). Starfall right ring is ~18px left of Nuke's.
+REF_LEFT_C = (540, 281)
 REF_RIGHT_C = (2307, 281)
 REF_AVATAR_R = 172
+# Per-tier avatar centers/radii measured from baked ring INNER hole on ref JPGs.
+# paste_r is ~2px inside median inner red/magenta stroke so a uniform ring remains.
+# cover_r clears leftover placeholder headshot up to (but not over) the stroke.
+REF_AVATAR_GEOM = {
+    # Multi-angle INNER hole fit. paste = rin_min-5; cover = rin_min-1
+    # so placeholder clears without eating dark stroke fringe.
+    "Nuke": {
+        "left": (539, 280),
+        "right": (2307, 281),
+        "left_r": 169,
+        "right_r": 165,
+        "left_cover": 173,
+        "right_cover": 169,
+    },
+    "Smite": {
+        "left": (538, 279),
+        "right": (2297, 279),
+        "left_r": 170,
+        "right_r": 169,
+        "left_cover": 174,
+        "right_cover": 173,
+    },
+    "Starfall": {
+        "left": (540, 281),
+        "right": (2289, 282),
+        "left_r": 168,
+        "right_r": 167,
+        "left_cover": 172,
+        "right_cover": 171,
+    },
+}
 # Username band measured from ref "User"/"@User" glyphs
-REF_NAME_MID_Y = 560
-REF_NAME_FONT = 46
-REF_NAME_STROKE = {"Nuke": 2, "Smite": 3, "Starfall": 5}
-REF_NAME_BAND = (500, 620)  # y0, y1
-REF_NAME_HALF_W = 340
+REF_NAME_MID_Y = 562
+REF_NAME_BAND = (500, 640)  # y0, y1
+REF_NAME_HALF_W = 400
+# Exact @swagbruuu sticker is native ~392px tall (full outline). Scale so
+# letter fill (~270px) matches baked User fill (~65px) on 2816-wide cards.
+REF_STICKER_NATIVE_H = 392
+REF_STICKER_TARGET_H = 94  # ~65px fill after scale; fits REF_NAME_BAND
+# Non-exact usernames: single-pass Plus Jakarta ExtraBold (not sticker glyphs).
+REF_NAME_FONT = 58
+REF_NAME_STROKE = 3
+# Stroke-aware positive tracking so black outlines do not smash.
+# (Avoid negative / sticker-style overlap — that caused ghost outlines.)
+REF_NAME_TRACKING = 7
+
+_GLYPHS_DIR = Path(__file__).resolve().parent / "assets" / "glyphs"
+_STICKER_REF_JPG = (
+    Path(__file__).resolve().parent / "assets" / "refs" / "username_sticker_swagbruuu.jpg"
+)
+_STICKER_FULL_PNG = _GLYPHS_DIR / "sticker_swagbruuu_full.png"
+_GLYPHS_META = _GLYPHS_DIR / "glyphs_meta.json"
+
+# Lazy cache: {char: (RGBA sprite, advance, left_bearing)} plus full sticker
+_STICKER_CACHE: dict | None = None
+
+
+def _avatar_geom(tier: str) -> dict:
+    return REF_AVATAR_GEOM.get(tier, REF_AVATAR_GEOM["Nuke"])
+
+
+def _cover_ring_hole(
+    canvas: Image.Image,
+    center: Tuple[int, int],
+    cover_radius: int,
+) -> None:
+    """Paint opaque black inside the baked ring without touching the stroke.
+
+    Uses a disk of cover_radius, but skips pixels that look like the accent
+    ring (red / magenta / pink) so leftover placeholder can be cleared even
+    when cover_radius reaches the uneven inner edge of the stroke.
+    """
+    if cover_radius <= 0:
+        return
+    cx, cy = center
+    cr = int(cover_radius)
+    x0, y0 = cx - cr, cy - cr
+    x1, y1 = cx + cr, cy + cr
+    box = canvas.crop((x0, y0, x1, y1)).convert("RGBA")
+    pix = box.load()
+    w, h = box.size
+    cr2 = cr * cr
+    for yy in range(h):
+        dy = yy - cr
+        for xx in range(w):
+            dx = xx - cr
+            if dx * dx + dy * dy > cr2:
+                continue
+            r, g, b, a = pix[xx, yy]
+            # Protect accent stroke incl. dark red/magenta fringe (r can be ~30-70).
+            if a > 0 and r >= 28 and r - g >= 12 and (r - b >= 10 or b - g >= 12):
+                continue
+            pix[xx, yy] = (0, 0, 0, 255)
+    canvas.paste(box, (x0, y0))
 
 
 def _paste_circular_avatar(
@@ -635,8 +831,18 @@ def _paste_circular_avatar(
     avatar: Image.Image,
     center: Tuple[int, int],
     radius: int,
+    *,
+    cover_radius: int | None = None,
 ) -> None:
+    """Paste a circular headshot centered on the baked ring.
+
+    cover_radius clears leftover placeholder inside the ring WITHOUT painting
+    over the red/magenta stroke. paste radius should be <= inner hole so stroke
+    thickness stays even all the way around.
+    """
     cx, cy = center
+    cr = int(cover_radius if cover_radius is not None else radius)
+    _cover_ring_hole(canvas, center, cr)
     diam = radius * 2
     av = avatar.convert("RGBA").resize((diam, diam), Image.Resampling.LANCZOS)
     mask = Image.new("L", (diam, diam), 0)
@@ -645,45 +851,250 @@ def _paste_circular_avatar(
 
 
 def _erase_placeholder_names(canvas: Image.Image, cx: int) -> None:
-    """Remove ref User/@User glyphs; rebuild background so glow survives."""
-    import numpy as np
+    """Remove ref User/@User glyphs; rebuild background so glow survives.
 
+    Pillow-only (no numpy) so Render free-tier deps stay tiny.
+    """
     y0, y1 = REF_NAME_BAND
-    arr = np.array(canvas.convert("RGBA"))
     x0 = max(0, int(cx) - REF_NAME_HALF_W)
-    x1 = min(arr.shape[1], int(cx) + REF_NAME_HALF_W)
-    region = arr[y0:y1, x0:x1].copy()
-    lum = region[:, :, :3].max(axis=2)
-    white = lum >= 180
-    # Dilate to swallow black stroke + AA fringe around glyphs
-    mimg = Image.fromarray((white.astype(np.uint8) * 255), mode="L")
+    x1 = min(canvas.size[0], int(cx) + REF_NAME_HALF_W)
+    rgba = canvas.convert("RGBA")
+    crop = rgba.crop((x0, y0, x1, y1))
+    # Near-white glyph cores only (NOT pink/red fade: those are bright in R
+    # but dark in G/B). Require all channels high + low saturation.
+    bands = crop.split()
+    # min(R,G,B) via darker of darker(R,G), B
+    min_rg = ImageChops.darker(bands[0], bands[1])
+    min_rgb = ImageChops.darker(min_rg, bands[2])
+    max_rg = ImageChops.lighter(bands[0], bands[1])
+    max_rgb = ImageChops.lighter(max_rg, bands[2])
+    # white-ish: min>=160 and (max-min)<=45
+    white = Image.new("L", crop.size, 0)
+    wp, mn, mx = white.load(), min_rgb.load(), max_rgb.load()
+    w, h = crop.size
+    for y in range(h):
+        for x in range(w):
+            a = bands[3].getpixel((x, y)) if len(bands) > 3 else 255
+            if a < 8:
+                continue
+            lo, hi = mn[x, y], mx[x, y]
+            if lo >= 160 and (hi - lo) <= 45:
+                wp[x, y] = 255
+    # Dilate to swallow black stroke + AA fringe
+    mask = white
     for _ in range(3):
-        mimg = mimg.filter(ImageFilter.MaxFilter(9))
-    mask = np.array(mimg) > 0
-    for row in range(region.shape[0]):
-        m = mask[row]
-        if not m.any():
-            continue
-        if (~m).sum() >= 8:
-            bg = np.median(region[row][~m], axis=0)
+        mask = mask.filter(ImageFilter.MaxFilter(9))
+    # Per-row: fill masked pixels from median of unmasked neighbors on that row
+    pix = crop.load()
+    mpx = mask.load()
+    w, h = crop.size
+    for row in range(h):
+        bg_samples = []
+        for col in range(w):
+            if mpx[col, row] == 0:
+                bg_samples.append(pix[col, row])
+        if len(bg_samples) < 8:
+            # sample just outside the name window on this absolute row
+            ay = y0 + row
+            for sx in range(max(0, x0 - 60), x0):
+                bg_samples.append(rgba.getpixel((sx, ay)))
+            for sx in range(x1, min(rgba.size[0], x1 + 60)):
+                bg_samples.append(rgba.getpixel((sx, ay)))
+        if not bg_samples:
+            bg = (0, 0, 0, 0)
         else:
-            # sample just outside the name window on this row
-            left = arr[y0 + row, max(0, x0 - 60) : x0]
-            right = arr[y0 + row, x1 : min(arr.shape[1], x1 + 60)]
-            samples = []
-            if left.size:
-                samples.append(left)
-            if right.size:
-                samples.append(right)
-            if samples:
-                bg = np.median(np.concatenate(samples, axis=0), axis=0)
-            else:
-                bg = np.array([0, 0, 0, 0], dtype=np.float64)
-        region[row][m] = bg
-    arr[y0:y1, x0:x1] = region
-    # Force full overwrite (Pillow otherwise uses alpha as mask and skips A=0).
-    out = Image.fromarray(arr)
-    canvas.paste(out, (0, 0), Image.new("L", out.size, 255))
+            # median per channel (preserve alpha so transparent plate stays clear)
+            rs = sorted(p[0] for p in bg_samples)
+            gs = sorted(p[1] for p in bg_samples)
+            bs = sorted(p[2] for p in bg_samples)
+            als = sorted((p[3] if len(p) > 3 else 255) for p in bg_samples)
+            mid = len(bg_samples) // 2
+            bg = (rs[mid], gs[mid], bs[mid], als[mid])
+        for col in range(w):
+            if mpx[col, row] != 0:
+                pix[col, row] = bg
+    rgba.paste(crop, (x0, y0))
+    # Force full overwrite so A=0 clears (Pillow otherwise uses alpha as mask).
+    canvas.paste(rgba, (0, 0), Image.new("L", rgba.size, 255))
+
+
+def _load_sticker_glyphs() -> dict:
+    """Load RGBA sticker glyphs + advances. @ always from exact cutout."""
+    global _STICKER_CACHE
+    if _STICKER_CACHE is not None:
+        return _STICKER_CACHE
+
+    import json
+
+    meta = {}
+    if _GLYPHS_META.is_file():
+        meta = json.loads(_GLYPHS_META.read_text())
+    metrics = meta.get("metrics") or {}
+
+    glyphs: dict = {"_meta": meta}
+    # Map file stem → char
+    file_map = {
+        "at": "@",
+        "a": "a",
+        "b": "b",
+        "g": "g",
+        "r": "r",
+        "s": "s",
+        "u": "u",
+        "w": "w",
+    }
+    for stem, ch in file_map.items():
+        fp = _GLYPHS_DIR / f"glyph_{stem}.png"
+        if not fp.is_file():
+            continue
+        img = Image.open(fp).convert("RGBA")
+        m = metrics.get(stem) or {}
+        advance = int(m.get("advance") or img.size[0])
+        left_bearing = int(m.get("left_bearing") or 0)
+        glyphs[ch] = (img, advance, left_bearing)
+
+    if _STICKER_FULL_PNG.is_file():
+        glyphs["_full"] = Image.open(_STICKER_FULL_PNG).convert("RGBA")
+    elif _STICKER_REF_JPG.is_file():
+        # Fallback: treat ref JPG as opaque white-bg sticker (rare)
+        glyphs["_full"] = Image.open(_STICKER_REF_JPG).convert("RGBA")
+
+    if "@" not in glyphs:
+        raise FileNotFoundError(
+            f"missing exact @ sticker glyph at {_GLYPHS_DIR / 'glyph_at.png'}"
+        )
+
+    _STICKER_CACHE = glyphs
+    return glyphs
+
+
+def _normalize_username(name: str) -> str:
+    s = str(name).strip()
+    if not s:
+        s = "User"
+    return s if s.startswith("@") else f"@{s}"
+
+
+def _is_exact_swagbruuu(label: str) -> bool:
+    core = label[1:] if label.startswith("@") else label
+    return core.lower() == "swagbruuu"
+
+
+def _scale_rgba(img: Image.Image, target_h: int) -> Image.Image:
+    if img.size[1] == target_h:
+        return img
+    scale = target_h / float(img.size[1])
+    nw = max(1, int(round(img.size[0] * scale)))
+    nh = max(1, int(round(target_h)))
+    return img.resize((nw, nh), Image.Resampling.LANCZOS)
+
+
+def _compose_font_name_only(
+    name_no_at: str,
+    *,
+    font_size: int = REF_NAME_FONT,
+    stroke: int = REF_NAME_STROKE,
+    tracking: float = REF_NAME_TRACKING,
+) -> Image.Image:
+    """Draw username letters only (no @) — Plus Jakarta ExtraBold sticker style.
+
+    Preserves Roblox casing. White fill + black stroke. Stroke-then-fill so
+    neighbor outlines do not punch letter fills. @ is NEVER drawn here.
+    """
+    if not name_no_at:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+
+    font = load_font(font_size, family="plus_jakarta", weight=800)
+    fill = (255, 255, 255, 255)
+    stroke_fill = (0, 0, 0, 255)
+    pad = stroke + 6
+
+    chars = list(name_no_at)
+    advances: list[float] = []
+    for ch in chars:
+        try:
+            advances.append(float(font.getlength(ch)))
+        except Exception:
+            bb = font.getbbox(ch)
+            advances.append(float(bb[2] - bb[0]) if bb else float(font_size))
+
+    probe = Image.new("RGBA", (1, 1))
+    dr = ImageDraw.Draw(probe)
+    bbox = dr.textbbox((0, 0), "Hg", font=font, stroke_width=stroke)
+    content_h = max(1, bbox[3] - bbox[1])
+    tracked_w = sum(advances)
+    if len(chars) > 1:
+        tracked_w += tracking * (len(chars) - 1)
+
+    gw = int(tracked_w) + pad * 2 + stroke * 2 + 2
+    gh = int(content_h) + pad * 2 + 2
+    sprite = Image.new("RGBA", (gw, gh), (0, 0, 0, 0))
+    dr = ImageDraw.Draw(sprite)
+
+    origin_y = pad - bbox[1]
+    xs: list[float] = []
+    x = float(pad + stroke)
+    for i, adv in enumerate(advances):
+        xs.append(x)
+        x += adv
+        if i < len(advances) - 1:
+            x += tracking
+
+    for ch, cx in zip(chars, xs):
+        dr.text(
+            (cx, origin_y),
+            ch,
+            font=font,
+            fill=stroke_fill,
+            stroke_width=stroke,
+            stroke_fill=stroke_fill,
+        )
+    for ch, cx in zip(chars, xs):
+        dr.text((cx, origin_y), ch, font=font, fill=fill)
+
+    bbox2 = sprite.getbbox()
+    if bbox2:
+        sprite = sprite.crop(bbox2)
+    return sprite
+
+
+def _compose_sticker_username(
+    label: str,
+    target_h: int = REF_STICKER_TARGET_H,
+) -> Image.Image:
+    """Username sprite.
+
+    - Exact @swagbruuu → whole sticker PNG (pixel-identical).
+    - Every other name → EXACT sticker @ cutout + font letters (no font @).
+    """
+    glyphs = _load_sticker_glyphs()
+
+    if _is_exact_swagbruuu(label):
+        full = glyphs.get("_full")
+        if full is not None:
+            return _scale_rgba(full, target_h)
+
+    if "@" not in glyphs:
+        raise RuntimeError("exact sticker @ glyph missing — refuse font @")
+
+    at_sprite, _adv, _bear = glyphs["@"]
+    at_img = _scale_rgba(at_sprite, target_h)
+    core = label[1:] if label.startswith("@") else label
+    name_img = _compose_font_name_only(core)
+    # Match letter height to sticker @ height so the row looks even.
+    if name_img.size[1] != target_h:
+        name_img = _scale_rgba(name_img, target_h)
+
+    gap = max(2, int(round(target_h * 0.02)))  # slight gap; outlines should not smash
+    total_w = at_img.size[0] + gap + name_img.size[0]
+    total_h = max(at_img.size[1], name_img.size[1])
+    canvas = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
+    ay = (total_h - at_img.size[1]) // 2
+    ny = (total_h - name_img.size[1]) // 2
+    canvas.alpha_composite(at_img, (0, ay))
+    canvas.alpha_composite(name_img, (at_img.size[0] + gap, ny))
+    return canvas
+
 
 
 def _cover_and_draw_names(
@@ -692,26 +1103,31 @@ def _cover_and_draw_names(
     receiver_name: str,
     tier: str,
 ) -> None:
-    for cx, _cy in (REF_LEFT_C, REF_RIGHT_C):
+    """Erase baked User/@User and draw @names under avatars (sticker or font)."""
+    geom = _avatar_geom(tier)
+    left_c = geom["left"]
+    right_c = geom["right"]
+    for cx, _cy in (left_c, right_c):
         _erase_placeholder_names(canvas, cx)
-    draw = ImageDraw.Draw(canvas)
-    font = load_font(REF_NAME_FONT, family="prompt_extrabold")
-    stroke = REF_NAME_STROKE.get(tier, 3)
-    for name, cx in ((donor_name, REF_LEFT_C[0]), (receiver_name, REF_RIGHT_C[0])):
-        label = name if str(name).startswith("@") else f"@{name}"
-        bbox = draw.textbbox((0, 0), label, font=font, stroke_width=stroke)
-        tw = bbox[2] - bbox[0]
-        th = bbox[1] + bbox[3]
-        x = cx - tw / 2 - bbox[0]
-        y = REF_NAME_MID_Y - th / 2
-        draw.text(
-            (x, y),
-            label,
-            font=font,
-            fill=(255, 255, 255, 255),
-            stroke_width=stroke,
-            stroke_fill=(0, 0, 0, 255),
-        )
+
+    if canvas.mode != "RGBA":
+        rgba = canvas.convert("RGBA")
+    else:
+        rgba = canvas
+
+    for name, cx in ((donor_name, left_c[0]), (receiver_name, right_c[0])):
+        label = _normalize_username(name)
+        sprite = _compose_sticker_username(label, REF_STICKER_TARGET_H)
+        tw, th = sprite.size
+        x = int(round(cx - tw / 2))
+        y = int(round(REF_NAME_MID_Y - th / 2))
+        rgba.alpha_composite(sprite, (x, y))
+
+    if canvas is not rgba:
+        canvas.paste(rgba)
+    else:
+        # ensure caller sees updates (in-place on RGBA)
+        pass
 
 
 def render_from_exact_ref(
@@ -734,8 +1150,17 @@ def render_from_exact_ref(
     canvas = Image.open(src).convert("RGBA")
     donor_av = donor_avatar or fetch_headshot(int(donor_id))
     recv_av = receiver_avatar or fetch_headshot(int(receiver_id))
-    _paste_circular_avatar(canvas, donor_av, REF_LEFT_C, REF_AVATAR_R)
-    _paste_circular_avatar(canvas, recv_av, REF_RIGHT_C, REF_AVATAR_R)
+    geom = _avatar_geom(resolved)
+    left_r = int(geom.get("left_r", geom.get("r", REF_AVATAR_R)))
+    right_r = int(geom.get("right_r", geom.get("r", REF_AVATAR_R)))
+    left_cover = int(geom.get("left_cover", left_r))
+    right_cover = int(geom.get("right_cover", right_r))
+    _paste_circular_avatar(
+        canvas, donor_av, geom["left"], left_r, cover_radius=left_cover
+    )
+    _paste_circular_avatar(
+        canvas, recv_av, geom["right"], right_r, cover_radius=right_cover
+    )
     _cover_and_draw_names(canvas, donor_name, receiver_name, resolved)
     return canvas
 

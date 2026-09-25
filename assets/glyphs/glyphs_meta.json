@@ -1,0 +1,61 @@
+{
+  "pad": 28,
+  "glyph_height": 392,
+  "content_bbox": [
+    320,
+    144,
+    2583,
+    535
+  ],
+  "metrics": {
+    "at": {
+      "advance": 345,
+      "left_bearing": 0,
+      "width": 373,
+      "height": 392
+    },
+    "s": {
+      "advance": 175,
+      "left_bearing": 28,
+      "width": 231,
+      "height": 392
+    },
+    "w": {
+      "advance": 292,
+      "left_bearing": 28,
+      "width": 348,
+      "height": 392
+    },
+    "a": {
+      "advance": 189,
+      "left_bearing": 28,
+      "width": 245,
+      "height": 392
+    },
+    "g": {
+      "advance": 232,
+      "left_bearing": 28,
+      "width": 288,
+      "height": 392
+    },
+    "b": {
+      "advance": 231,
+      "left_bearing": 28,
+      "width": 287,
+      "height": 392
+    },
+    "r": {
+      "advance": 145,
+      "left_bearing": 28,
+      "width": 201,
+      "height": 392
+    },
+    "u": {
+      "advance": 209,
+      "left_bearing": 28,
+      "width": 265,
+      "height": 392
+    }
+  },
+  "full_sticker": "sticker_swagbruuu_full.png"
+}
