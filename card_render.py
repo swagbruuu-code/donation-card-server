@@ -7,6 +7,8 @@ the donation amount (refs bake a fixed tier amount like 100,000).
 Legacy full Pillow renderer kept below for offline experiments only.
 
 Fonts:
+  - Amount (exact-ref redraw): Plus Jakarta Sans ExtraBold (matches baked
+    Nuke/Smite/Starfall digit shapes; Prompt ExtraBold was a mismatch)
   - Amount / "donated to" (legacy path): Prompt ExtraBold
   - @usernames (exact-ref path):
       * Every name (incl. swagbruuu) → exact sticker @ cutout + Plus Jakarta
@@ -270,7 +272,7 @@ def load_font(
                 pass
         family = "prompt_extrabold"
 
-    # Amount: Montserrat ExtraBold (~800) — clean geometric digits matching refs
+    # Legacy amount/"donated to": Prompt ExtraBold (exact-ref amount uses plus_jakarta)
     if family in ("amount", "donated"):
         path = (
             _first_existing(_PROMPT_EXTRABOLD)
@@ -789,9 +791,11 @@ REF_NAME_TRACKING = -2
 
 # Exact-ref amount row (2816×704). Refs bake a fixed amount (Nuke 100,000 /
 # Smite 1,000,000 / Starfall 10,000,000); live path wipes that band and redraws.
-REF_AMOUNT_FONT = 185
+# Plus Jakarta ExtraBold @ ~174 matches baked Nuke digit height/width;
+# gap 55 matches robux→"1" spacing on the ref (Prompt@185/gap45 was off).
+REF_AMOUNT_FONT = 174
 REF_ROBUX_SIZE = 145
-REF_ROBUX_GAP = 45
+REF_ROBUX_GAP = 55
 REF_AMOUNT_TOP = 148
 REF_AMOUNT_BAND = (120, 330)  # y0,y1 — above "donated to" (~350)
 REF_AMOUNT_X0 = 700
@@ -1270,10 +1274,15 @@ def _wipe_baked_amount(canvas: Image.Image, accent: Tuple[int, int, int]) -> Non
 
 
 def _draw_ref_amount(canvas: Image.Image, amount: int, tier: str) -> None:
-    """Paint robux hex + comma-formatted amount centered on the exact-ref card."""
+    """Paint robux hex + comma-formatted amount centered on the exact-ref card.
+
+    Uses Plus Jakarta Sans ExtraBold — same geometric digit style as the baked
+    Nuke/Smite/Starfall amounts (Prompt ExtraBold reads heavier/rounder and
+    mismatched the ref typeface after wipe+redraw).
+    """
     accent = TIER_ACCENTS.get(tier, TIER_ACCENTS["Nuke"])
     amount_text = format_amount(amount)
-    font = load_font(REF_AMOUNT_FONT, family="amount")
+    font = load_font(REF_AMOUNT_FONT, family="plus_jakarta", weight=800)
     draw = ImageDraw.Draw(canvas)
     aw = tracked_text_width(amount_text, font, AMOUNT_TRACKING)
     bbox = draw.textbbox((0, 0), amount_text, font=font)
