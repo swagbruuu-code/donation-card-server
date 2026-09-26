@@ -166,7 +166,24 @@ def post_discord_multipart(
     )
 
 
+def post_discord_text_only(
+    webhook_url: str,
+    content: str,
+    color: int,
+    footer_text: str | None = None,
+) -> requests.Response:
+    """Last-resort Discord post without PNG so accepted jobs never fully drop."""
+    footer = footer_text if footer_text is not None else format_donated_footer()
+    payload = {
+        "content": content,
+        "embeds": [{"color": color, "footer": {"text": footer}}],
+        "allowed_mentions": {"parse": []},
+    }
+    return requests.post(webhook_url, json=payload, timeout=15)
+
+
 def _set_job(job_id: str, **fields) -> None:
+
     with _jobs_lock:
         job = _jobs.get(job_id) or {"id": job_id}
         job.update(fields)
@@ -241,6 +258,15 @@ def _process_job(job_id: str, data: dict) -> None:
         png = render_card_png_bytes(**fields)
     except Exception as exc:
         log.exception("render failed job=%s", job_id)
+        # Still try text-only so an accepted job is not a silent miss.
+        if webhook:
+            try:
+                resp = post_discord_text_only(webhook, content, color, footer)
+                if resp.status_code in (200, 204):
+                    _set_job(job_id, status="posted", mode="posted_text_fallback", error=f"render: {exc}")
+                    return
+            except requests.RequestException as post_exc:
+                log.warning("text fallback after render fail: %s", post_exc)
         _set_job(job_id, status="error", error=f"render: {exc}")
         return
 
@@ -263,6 +289,21 @@ def _process_job(job_id: str, data: dict) -> None:
         _set_job(job_id, status="posted", mode="posted", detail=detail, footer=footer)
         log.info("job %s posted ok", job_id)
     else:
+        # Multipart failed after retries — text+color still beats a total miss.
+        try:
+            resp = post_discord_text_only(webhook, content, color, footer)
+            if resp.status_code in (200, 204):
+                _set_job(
+                    job_id,
+                    status="posted",
+                    mode="posted_text_fallback",
+                    error=detail,
+                    footer=footer,
+                )
+                log.warning("job %s multipart failed (%s); text fallback ok", job_id, detail)
+                return
+        except requests.RequestException as post_exc:
+            log.warning("job %s text fallback failed: %s", job_id, post_exc)
         cid = _save_card(png)
         image_url = f"{PUBLIC_BASE}/cards/{cid}.png" if PUBLIC_BASE else None
         _set_job(
