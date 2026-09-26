@@ -766,9 +766,10 @@ REF_NAME_MID_Y = 562
 REF_NAME_BAND = (490, 650)  # y0, y1 — pad beyond glyph bbox ~525-594
 REF_NAME_HALF_W = 450  # covers @User (~253px) with margin either side
 # Tight hard-wipe core around measured glyph ink (Nuke/Smite/Starfall).
-REF_NAME_HARD_BAND = (515, 605)
-REF_NAME_HARD_HALF_W_LEFT = 220   # "User" ~177px
-REF_NAME_HARD_HALF_W_RIGHT = 280  # "@User" ~253px
+REF_NAME_HARD_BAND = (500, 625)
+# Cover full username sprite footprint (long names e.g. TheMan3mad ~562px wide).
+REF_NAME_HARD_HALF_W_LEFT = 320
+REF_NAME_HARD_HALF_W_RIGHT = 320
 # Exact @swagbruuu sticker is native ~392px tall (full outline). Scale so
 # letter fill (~270px) matches baked User fill (~65px) on 2816-wide cards.
 REF_STICKER_NATIVE_H = 392
@@ -921,7 +922,9 @@ def _erase_placeholder_names(
         for xx in range(max(0, hx0 - x0), min(w, hx1 - x0)):
             mpx[xx, yy] = 255
 
-    # Per-row: fill masked pixels from median of unmasked neighbors on that row
+    # Per-row: solid opaque fill of masked pixels from median of unmasked
+    # neighbors (or side samples). Hard-rect rows get a decisive wipe so any
+    # baked User/@User ink under the @+letters band is gone before sprites.
     pix = crop.load()
     for row in range(h):
         bg_samples = []
@@ -943,12 +946,50 @@ def _erase_placeholder_names(
             als = sorted((p[3] if len(p) > 3 else 255) for p in bg_samples)
             mid = len(bg_samples) // 2
             bg = (rs[mid], gs[mid], bs[mid], als[mid])
+            # Near-black samples → fully transparent void (Nuke) so no grey plate.
+            if bg[0] <= 18 and bg[1] <= 18 and bg[2] <= 18 and bg[3] <= 40:
+                bg = (0, 0, 0, 0)
         for col in range(w):
             if mpx[col, row] != 0:
                 pix[col, row] = bg
     rgba.paste(crop, (x0, y0))
     # Force full overwrite so A=0 clears (Pillow otherwise uses alpha as mask).
     canvas.paste(rgba, (0, 0), Image.new("L", rgba.size, 255))
+
+
+def _sanitize_at_glyph(img: Image.Image) -> Image.Image:
+    """Strip next-letter ink glued to the right of the sticker @ cutout.
+
+    The @ was sliced from @swagbruuu; JPEG/cutout fringe often keeps the leading
+    edge of "s" (or similar). That fringe peeks out right after @ under every
+    composited username. Zero columns after the first sustained low-ink valley
+    past the @ body, then crop transparent right pad.
+    """
+    px = img.load()
+    w, h = img.size
+    col_ink = [0] * w
+    for x in range(w):
+        n = 0
+        for y in range(h):
+            r, g, b, a = px[x, y]
+            if a >= 20 and max(r, g, b) >= 30:
+                n += 1
+        col_ink[x] = n
+    cut = None
+    # @ body lives in the left ~85% of a well-cut glyph; search valley after that.
+    start = max(0, int(w * 0.55))
+    for x in range(start, w - 5):
+        if all(col_ink[x + k] <= 8 for k in range(5)):
+            cut = x
+            break
+    if cut is None:
+        return img
+    keep_w = min(w, cut + 2)
+    if keep_w >= w:
+        # Still clear any sparse trailing rise beyond valley if width kept.
+        return img
+    out = img.crop((0, 0, keep_w, h))
+    return out
 
 
 def _load_sticker_glyphs() -> dict:
@@ -977,13 +1018,24 @@ def _load_sticker_glyphs() -> dict:
         "w": "w",
     }
     for stem, ch in file_map.items():
-        fp = _GLYPHS_DIR / f"glyph_{stem}.png"
+        # Prefer cleaned @ cutout (no next-letter fringe) when present.
+        if stem == "at":
+            fp = _GLYPHS_DIR / "glyph_at_clean.png"
+            if not fp.is_file():
+                fp = _GLYPHS_DIR / "glyph_at.png"
+        else:
+            fp = _GLYPHS_DIR / f"glyph_{stem}.png"
         if not fp.is_file():
             continue
         img = Image.open(fp).convert("RGBA")
+        if ch == "@":
+            img = _sanitize_at_glyph(img)
         m = metrics.get(stem) or {}
         advance = int(m.get("advance") or img.size[0])
         left_bearing = int(m.get("left_bearing") or 0)
+        # Advance must not exceed sanitized width (avoids placing letters over
+        # cleared right fringe that no longer exists).
+        advance = min(advance, img.size[0])
         glyphs[ch] = (img, advance, left_bearing)
 
     if _STICKER_FULL_PNG.is_file():

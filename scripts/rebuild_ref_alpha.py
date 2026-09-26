@@ -42,12 +42,12 @@ FADE = {
 
 # Left baked label centers on ~540 ("User"); right on ~2310 ("@User", wider).
 NAME_SLOTS = (
-    # (cx, soft_half_w, hard_half_w)
-    (540, 450, 220),
-    (2310, 450, 280),
+    # (cx, soft_half_w, hard_half_w) — hard covers full @+username sprite
+    (540, 450, 320),
+    (2310, 450, 320),
 )
 NAME_BAND = (490, 650)
-NAME_HARD_BAND = (515, 605)
+NAME_HARD_BAND = (500, 625)
 
 
 def erase_names(jpg: np.ndarray) -> np.ndarray:
