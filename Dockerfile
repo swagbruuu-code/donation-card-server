@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt gunicorn
 COPY . .
 ENV PORT=8787
 EXPOSE 8787
-CMD ["gunicorn", "-b", "0.0.0.0:8787", "-w", "2", "--timeout", "60", "app:app"]
+CMD ["gunicorn", "-b", "0.0.0.0:8787", "-w", "2", "-k", "gthread", "--threads", "8", "--timeout", "120", "app:app"]

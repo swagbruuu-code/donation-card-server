@@ -78,11 +78,35 @@ Game LogDonation (≥100k)
         content = "@Donor donated **amount** Robux to @Receiver"
         embed.color = tier accent
         embed.image = attachment://donation_card.png
-  → { ok: true, mode: "posted" }
+  → { ok: true, mode: "accepted", jobId }  # Discord posted async by worker
 ```
 
 If `CardRenderUrl` is empty or the request fails, the game falls back to
 **text + embed.color only** (still Hazem text format; **no** old `dononoto.png`).
+
+
+## Burst / concurrency
+
+Render free tier previously ran **2 sync gunicorn workers**. Three `/render`
+calls in ~10s serialized to **~15–23s** wall time — longer than Roblox
+`HttpService` often allows, so some in-game card POSTs failed.
+
+Current behaviour:
+
+1. `POST /render` **accepts immediately** (`200`, `mode: "accepted"`, `jobId`)
+2. A thread pool (default 8) renders PNGs in parallel
+3. Discord multipart posts are rate-spaced + retried on 429/5xx (never silently dropped)
+4. `GET /jobs/<jobId>` shows `queued|rendering|posting|posted|error`
+5. `GET /ping` (alias of `/health`) for keep-alives
+6. `POST /render?sync=1` waits for Discord (local tests only)
+
+Gunicorn: `gthread`, 2 workers × 8 threads, timeout 120s.
+
+```bash
+# Local burst proof (all 3 must reach Discord):
+export DONATE_LOGS_WEBHOOK='https://discord.com/api/webhooks/...'
+./scripts/burst_test.sh http://127.0.0.1:8787 "$DONATE_LOGS_WEBHOOK"
+```
 
 ## Local test without spamming prod
 

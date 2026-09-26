@@ -1237,8 +1237,22 @@ def render_from_exact_ref(
     if not src.is_file():
         raise FileNotFoundError(f"missing exact ref for {resolved}: {src}")
     canvas = Image.open(src).convert("RGBA")
-    donor_av = donor_avatar or fetch_headshot(int(donor_id))
-    recv_av = receiver_avatar or fetch_headshot(int(receiver_id))
+    if donor_avatar is not None and receiver_avatar is not None:
+        donor_av, recv_av = donor_avatar, receiver_avatar
+    elif donor_avatar is not None:
+        donor_av = donor_avatar
+        recv_av = fetch_headshot(int(receiver_id))
+    elif receiver_avatar is not None:
+        recv_av = receiver_avatar
+        donor_av = fetch_headshot(int(donor_id))
+    else:
+        # Parallel headshot fetch — sequential was ~2s of the warm /render budget.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_d = pool.submit(fetch_headshot, int(donor_id))
+            fut_r = pool.submit(fetch_headshot, int(receiver_id))
+            donor_av = fut_d.result()
+            recv_av = fut_r.result()
     geom = _avatar_geom(resolved)
     left_r = int(geom.get("left_r", geom.get("r", REF_AVATAR_R)))
     right_r = int(geom.get("right_r", geom.get("r", REF_AVATAR_R)))
