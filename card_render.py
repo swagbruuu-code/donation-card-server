@@ -798,8 +798,11 @@ REF_ROBUX_SIZE = 145
 REF_ROBUX_GAP = 55
 REF_AMOUNT_TOP = 148
 REF_AMOUNT_BAND = (120, 330)  # y0,y1 — above "donated to" (~350)
-REF_AMOUNT_X0 = 700
-REF_AMOUNT_X1 = 2120
+# Horizontal wipe must stay between avatar rings. Left ring outer ~731;
+# Starfall right ring starts ~2102. Amount ink spans ~782-2037 (10M) /
+# ~768-2048 (999M). Keep a small gap so transparent wipe never clips rings.
+REF_AMOUNT_X0 = 745  # was 700 — ate ~30px into left donor ring
+REF_AMOUNT_X1 = 2088  # was 2120 — clipped Starfall/Smite right ring
 REF_AMOUNT_STROKE = 0
 REF_AMOUNT_STROKE_STARFALL = 1
 
