@@ -1237,40 +1237,22 @@ def _cover_and_draw_names(
 
 
 def _wipe_baked_amount(canvas: Image.Image, accent: Tuple[int, int, int]) -> None:
-    """Erase baked robux icon + amount digits; keep Smite/Starfall bottom glow.
+    """Punch a transparent hole where the baked amount is printed.
 
-    Hard-wipes the measured amount band and fills each row from median samples
-    just outside the band (glow survives; Nuke stays opaque black).
+    The exact-reference PNGs already contain the card artwork with transparent
+    voids. Inpainting this band from neighboring pixels can create an opaque
+    matte/rectangle (especially on Smite), so the amount must be removed with
+    the same fully-transparent void punch used for the other baked elements.
     """
-    del accent  # reserved if we switch to chroma-only masks later
+    del accent  # kept in the signature for the tier-render call site
     y0, y1 = REF_AMOUNT_BAND
     x0, x1 = REF_AMOUNT_X0, REF_AMOUNT_X1
-    rgba = canvas.convert("RGBA")
-    crop = rgba.crop((x0, y0, x1, y1))
-    w, h = crop.size
-    pix = crop.load()
-    for row in range(h):
-        bg_samples = []
-        ay = y0 + row
-        for sx in range(max(0, x0 - 100), x0):
-            bg_samples.append(rgba.getpixel((sx, ay)))
-        for sx in range(x1, min(rgba.size[0], x1 + 100)):
-            bg_samples.append(rgba.getpixel((sx, ay)))
-        if not bg_samples:
-            bg = (0, 0, 0, 255)
-        else:
-            rs = sorted(p[0] for p in bg_samples)
-            gs = sorted(p[1] for p in bg_samples)
-            bs = sorted(p[2] for p in bg_samples)
-            als = sorted((p[3] if len(p) > 3 else 255) for p in bg_samples)
-            mid = len(bg_samples) // 2
-            bg = (rs[mid], gs[mid], bs[mid], als[mid])
-            if bg[0] <= 18 and bg[1] <= 18 and bg[2] <= 18:
-                bg = (0, 0, 0, 255)
-        for col in range(w):
-            pix[col, row] = bg
-    rgba.paste(crop, (x0, y0))
-    canvas.paste(rgba, (0, 0), Image.new("L", rgba.size, 255))
+    rgba = canvas if canvas.mode == "RGBA" else canvas.convert("RGBA")
+    # No mask here: A=0 must overwrite the baked pixels rather than being
+    # treated as a no-op by Pillow's masked paste semantics.
+    rgba.paste(Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0)), (x0, y0))
+    if rgba is not canvas:
+        canvas.paste(rgba, (0, 0), Image.new("L", rgba.size, 255))
 
 
 def _draw_ref_amount(canvas: Image.Image, amount: int, tier: str) -> None:
