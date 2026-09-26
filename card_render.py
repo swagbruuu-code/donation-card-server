@@ -1,9 +1,10 @@
 """Donation card images for Discord.
 
-Live path: serve the exact Nuke/Smite/Starfall reference JPGs from assets/refs
-(no redraw). Legacy Pillow renderer kept below for offline experiments only.
+Live path: exact Nuke/Smite/Starfall reference PNGs from assets/refs, with
+avatars/names composited and the Robux amount wiped+redrawn so the PNG matches
+the donation amount (refs bake a fixed tier amount like 100,000).
 
-Canvas constants below are unused by the live exact-ref path.
+Legacy full Pillow renderer kept below for offline experiments only.
 
 Fonts:
   - Amount / "donated to" (legacy path): Prompt ExtraBold
@@ -723,8 +724,8 @@ def render_card(
     return canvas
 
 
-# Exact-ref canvas geometry (2816×704). Rings/amount/"donated to"/glow stay
-# as in the user's photo; only Roblox headshots + @names are composited on.
+# Exact-ref canvas geometry (2816×704). Rings/"donated to"/glow stay from the
+# photo; amount+robux are wiped and redrawn; headshots + @names composited on.
 # Defaults (Nuke/Smite). Starfall right ring is ~18px left of Nuke's.
 REF_LEFT_C = (540, 281)
 REF_RIGHT_C = (2307, 281)
@@ -785,6 +786,18 @@ REF_NAME_STROKE = 3
 # once letters were wrongly upscaled to full outline height). Slightly
 # negative so fills nearly touch like the cutout (avoid < -4 ghosting).
 REF_NAME_TRACKING = -2
+
+# Exact-ref amount row (2816×704). Refs bake a fixed amount (Nuke 100,000 /
+# Smite 1,000,000 / Starfall 10,000,000); live path wipes that band and redraws.
+REF_AMOUNT_FONT = 185
+REF_ROBUX_SIZE = 145
+REF_ROBUX_GAP = 45
+REF_AMOUNT_TOP = 148
+REF_AMOUNT_BAND = (120, 330)  # y0,y1 — above "donated to" (~350)
+REF_AMOUNT_X0 = 700
+REF_AMOUNT_X1 = 2120
+REF_AMOUNT_STROKE = 0
+REF_AMOUNT_STROKE_STARFALL = 1
 
 _GLYPHS_DIR = Path(__file__).resolve().parent / "assets" / "glyphs"
 _STICKER_REF_JPG = (
@@ -1219,6 +1232,80 @@ def _cover_and_draw_names(
         pass
 
 
+def _wipe_baked_amount(canvas: Image.Image, accent: Tuple[int, int, int]) -> None:
+    """Erase baked robux icon + amount digits; keep Smite/Starfall bottom glow.
+
+    Hard-wipes the measured amount band and fills each row from median samples
+    just outside the band (glow survives; Nuke stays opaque black).
+    """
+    del accent  # reserved if we switch to chroma-only masks later
+    y0, y1 = REF_AMOUNT_BAND
+    x0, x1 = REF_AMOUNT_X0, REF_AMOUNT_X1
+    rgba = canvas.convert("RGBA")
+    crop = rgba.crop((x0, y0, x1, y1))
+    w, h = crop.size
+    pix = crop.load()
+    for row in range(h):
+        bg_samples = []
+        ay = y0 + row
+        for sx in range(max(0, x0 - 100), x0):
+            bg_samples.append(rgba.getpixel((sx, ay)))
+        for sx in range(x1, min(rgba.size[0], x1 + 100)):
+            bg_samples.append(rgba.getpixel((sx, ay)))
+        if not bg_samples:
+            bg = (0, 0, 0, 255)
+        else:
+            rs = sorted(p[0] for p in bg_samples)
+            gs = sorted(p[1] for p in bg_samples)
+            bs = sorted(p[2] for p in bg_samples)
+            als = sorted((p[3] if len(p) > 3 else 255) for p in bg_samples)
+            mid = len(bg_samples) // 2
+            bg = (rs[mid], gs[mid], bs[mid], als[mid])
+            if bg[0] <= 18 and bg[1] <= 18 and bg[2] <= 18:
+                bg = (0, 0, 0, 255)
+        for col in range(w):
+            pix[col, row] = bg
+    rgba.paste(crop, (x0, y0))
+    canvas.paste(rgba, (0, 0), Image.new("L", rgba.size, 255))
+
+
+def _draw_ref_amount(canvas: Image.Image, amount: int, tier: str) -> None:
+    """Paint robux hex + comma-formatted amount centered on the exact-ref card."""
+    accent = TIER_ACCENTS.get(tier, TIER_ACCENTS["Nuke"])
+    amount_text = format_amount(amount)
+    font = load_font(REF_AMOUNT_FONT, family="amount")
+    draw = ImageDraw.Draw(canvas)
+    aw = tracked_text_width(amount_text, font, AMOUNT_TRACKING)
+    bbox = draw.textbbox((0, 0), amount_text, font=font)
+    glyph_h = bbox[3] - bbox[1]
+    robux_size = REF_ROBUX_SIZE
+    gap = REF_ROBUX_GAP
+    pair_w = robux_size + gap + aw
+    pair_left = (canvas.size[0] - int(round(pair_w))) // 2
+    amount_top = REF_AMOUNT_TOP
+    amount_y = amount_top - bbox[1]
+    glyph_cy = amount_top + glyph_h / 2.0
+    paste_robux_hex(
+        canvas,
+        pair_left + robux_size // 2,
+        int(round(glyph_cy)),
+        robux_size,
+        accent,
+    )
+    draw = ImageDraw.Draw(canvas)
+    stroke = REF_AMOUNT_STROKE_STARFALL if tier == "Starfall" else REF_AMOUNT_STROKE
+    draw_text_tracked(
+        draw,
+        (pair_left + robux_size + gap, amount_y),
+        amount_text,
+        font,
+        fill=(*accent, 255),
+        tracking=AMOUNT_TRACKING,
+        stroke_width=stroke,
+        stroke_fill=(0, 0, 0, 255),
+    )
+
+
 def render_from_exact_ref(
     *,
     donor_id: int,
@@ -1231,12 +1318,15 @@ def render_from_exact_ref(
     receiver_avatar: Optional[Image.Image] = None,
     **_ignored,
 ) -> Image.Image:
-    """Exact reference photo + real Roblox headshots + @names only."""
+    """Exact reference photo + real headshots/names + live Robux amount."""
     resolved = resolve_tier(tier, amount)
     src = REF_FILES[resolved]
     if not src.is_file():
         raise FileNotFoundError(f"missing exact ref for {resolved}: {src}")
     canvas = Image.open(src).convert("RGBA")
+    accent = TIER_ACCENTS.get(resolved, TIER_ACCENTS["Nuke"])
+    _wipe_baked_amount(canvas, accent)
+    _draw_ref_amount(canvas, int(amount or 0), resolved)
     if donor_avatar is not None and receiver_avatar is not None:
         donor_av, recv_av = donor_avatar, receiver_avatar
     elif donor_avatar is not None:
