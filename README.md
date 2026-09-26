@@ -100,7 +100,7 @@ Current behaviour:
 5. `GET /ping` (alias of `/health`) for keep-alives
 6. `POST /render?sync=1` waits for Discord (local tests only)
 
-Gunicorn: `gthread`, 2 workers × 8 threads, timeout 120s.
+Gunicorn: `gthread`, **1 worker × 16 threads** (shared in-memory job map + Discord rate lock), timeout 120s.
 
 ```bash
 # Local burst proof (all 3 must reach Discord):
