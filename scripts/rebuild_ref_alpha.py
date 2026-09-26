@@ -40,25 +40,43 @@ FADE = {
     "starfall": dict(start_y=240, strength=0.55, exp=1.05, blur=10),
 }
 
-NAME_CENTERS = (540, 2307)
-NAME_BAND = (500, 640)
-NAME_HALF_W = 400
+# Left baked label centers on ~540 ("User"); right on ~2310 ("@User", wider).
+NAME_SLOTS = (
+    # (cx, soft_half_w, hard_half_w)
+    (540, 450, 220),
+    (2310, 450, 280),
+)
+NAME_BAND = (490, 650)
+NAME_HARD_BAND = (515, 605)
 
 
 def erase_names(jpg: np.ndarray) -> np.ndarray:
-    """Remove baked User/@User glyphs; keep surrounding fade RGB."""
+    """Remove baked User/@User glyphs; keep surrounding fade RGB.
+
+    Soft low-sat bright detection + hard core wipe so JPEG-softened glyph
+    fringes cannot survive into the keyed PNG (ghost under composited names).
+    """
     arr = jpg.copy()
     h, w = arr.shape[:2]
     y0, y1 = NAME_BAND
-    for cx in NAME_CENTERS:
-        x0, x1 = max(0, cx - NAME_HALF_W), min(w, cx + NAME_HALF_W)
+    hy0, hy1 = NAME_HARD_BAND
+    for cx, soft_hw, hard_hw in NAME_SLOTS:
+        x0, x1 = max(0, cx - soft_hw), min(w, cx + soft_hw)
         region = arr[y0:y1, x0:x1].copy()
-        lum = region.max(2)
-        white = lum >= 160
+        mn = region.min(2)
+        mx = region.max(2)
+        sat = mx - mn
+        # Glyph fill: bright + low sat. Exclude pink/red fade (high sat).
+        white = (sat <= 50) & ((mn >= 130) | ((mn >= 90) & (mx >= 150)))
         mimg = Image.fromarray((white.astype(np.uint8) * 255), "L")
-        for _ in range(4):
+        for _ in range(5):
             mimg = mimg.filter(ImageFilter.MaxFilter(9))
         mask = np.array(mimg) > 0
+        # Hard wipe measured glyph core
+        hx0, hx1 = max(0, cx - hard_hw), min(w, cx + hard_hw)
+        ly0, ly1 = max(0, hy0 - y0), min(region.shape[0], hy1 - y0)
+        lx0, lx1 = max(0, hx0 - x0), min(region.shape[1], hx1 - x0)
+        mask[ly0:ly1, lx0:lx1] = True
         for row in range(region.shape[0]):
             m = mask[row]
             if not m.any():
@@ -66,8 +84,8 @@ def erase_names(jpg: np.ndarray) -> np.ndarray:
             if (~m).sum() >= 8:
                 bg = np.median(region[row][~m], axis=0)
             else:
-                left = arr[y0 + row, max(0, x0 - 60) : x0]
-                right = arr[y0 + row, x1 : min(w, x1 + 60)]
+                left = arr[y0 + row, max(0, x0 - 80) : x0]
+                right = arr[y0 + row, x1 : min(w, x1 + 80)]
                 samples = [s for s in (left, right) if s.size]
                 bg = (
                     np.median(np.concatenate(samples, 0), 0)

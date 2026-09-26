@@ -760,10 +760,15 @@ REF_AVATAR_GEOM = {
         "right_cover": 171,
     },
 }
-# Username band measured from ref "User"/"@User" glyphs
+# Username band measured from ref "User" (left) / "@User" (right) glyphs.
+# Right slot is wider because baked text includes the @.
 REF_NAME_MID_Y = 562
-REF_NAME_BAND = (500, 640)  # y0, y1
-REF_NAME_HALF_W = 400
+REF_NAME_BAND = (490, 650)  # y0, y1 — pad beyond glyph bbox ~525-594
+REF_NAME_HALF_W = 450  # covers @User (~253px) with margin either side
+# Tight hard-wipe core around measured glyph ink (Nuke/Smite/Starfall).
+REF_NAME_HARD_BAND = (515, 605)
+REF_NAME_HARD_HALF_W_LEFT = 220   # "User" ~177px
+REF_NAME_HARD_HALF_W_RIGHT = 280  # "@User" ~253px
 # Exact @swagbruuu sticker is native ~392px tall (full outline). Scale so
 # letter fill (~270px) matches baked User fill (~65px) on 2816-wide cards.
 REF_STICKER_NATIVE_H = 392
@@ -854,8 +859,19 @@ def _paste_circular_avatar(
     canvas.paste(av, (cx - radius, cy - radius), mask)
 
 
-def _erase_placeholder_names(canvas: Image.Image, cx: int) -> None:
+def _erase_placeholder_names(
+    canvas: Image.Image,
+    cx: int,
+    *,
+    hard_half_w: int | None = None,
+) -> None:
     """Remove ref User/@User glyphs; rebuild background so glow survives.
+
+    Two passes:
+      1) Soft detect near-white / light-gray glyph cores (not pink fade), dilate
+         to swallow black stroke + AA, row-median inpaint.
+      2) Hard wipe the measured glyph core bbox so any residual ink dies even
+         when JPEG noise ducks under the soft threshold.
 
     Pillow-only (no numpy) so Render free-tier deps stay tiny.
     """
@@ -864,15 +880,13 @@ def _erase_placeholder_names(canvas: Image.Image, cx: int) -> None:
     x1 = min(canvas.size[0], int(cx) + REF_NAME_HALF_W)
     rgba = canvas.convert("RGBA")
     crop = rgba.crop((x0, y0, x1, y1))
-    # Near-white glyph cores only (NOT pink/red fade: those are bright in R
-    # but dark in G/B). Require all channels high + low saturation.
     bands = crop.split()
-    # min(R,G,B) via darker of darker(R,G), B
     min_rg = ImageChops.darker(bands[0], bands[1])
     min_rgb = ImageChops.darker(min_rg, bands[2])
     max_rg = ImageChops.lighter(bands[0], bands[1])
     max_rgb = ImageChops.lighter(max_rg, bands[2])
-    # white-ish: min>=160 and (max-min)<=45
+    # Soft mask: near-white OR light-gray low-sat cores (glyph fill + AA).
+    # Pink/red fade stays out — those are bright in R but dark in G/B.
     white = Image.new("L", crop.size, 0)
     wp, mn, mx = white.load(), min_rgb.load(), max_rgb.load()
     w, h = crop.size
@@ -882,32 +896,47 @@ def _erase_placeholder_names(canvas: Image.Image, cx: int) -> None:
             if a < 8:
                 continue
             lo, hi = mn[x, y], mx[x, y]
-            if lo >= 160 and (hi - lo) <= 45:
+            sat = hi - lo
+            if sat > 50:
+                continue  # chromatic = fade / accent, never glyph fill
+            if lo >= 130 or (lo >= 90 and hi >= 150):
                 wp[x, y] = 255
-    # Dilate to swallow black stroke + AA fringe
+    # Dilate to swallow black stroke + AA fringe around User/@User
     mask = white
-    for _ in range(3):
+    for _ in range(5):
         mask = mask.filter(ImageFilter.MaxFilter(9))
+
+    # Hard wipe core around this slot (left User narrower than right @User)
+    hy0, hy1 = REF_NAME_HARD_BAND
+    hw = int(
+        hard_half_w
+        if hard_half_w is not None
+        else REF_NAME_HARD_HALF_W_LEFT
+    )
+    hx0 = max(0, int(cx) - hw)
+    hx1 = min(canvas.size[0], int(cx) + hw)
+    mpx = mask.load()
+    # Paint hard-rect onto mask in crop-local coords
+    for yy in range(max(0, hy0 - y0), min(h, hy1 - y0)):
+        for xx in range(max(0, hx0 - x0), min(w, hx1 - x0)):
+            mpx[xx, yy] = 255
+
     # Per-row: fill masked pixels from median of unmasked neighbors on that row
     pix = crop.load()
-    mpx = mask.load()
-    w, h = crop.size
     for row in range(h):
         bg_samples = []
         for col in range(w):
             if mpx[col, row] == 0:
                 bg_samples.append(pix[col, row])
         if len(bg_samples) < 8:
-            # sample just outside the name window on this absolute row
             ay = y0 + row
-            for sx in range(max(0, x0 - 60), x0):
+            for sx in range(max(0, x0 - 80), x0):
                 bg_samples.append(rgba.getpixel((sx, ay)))
-            for sx in range(x1, min(rgba.size[0], x1 + 60)):
+            for sx in range(x1, min(rgba.size[0], x1 + 80)):
                 bg_samples.append(rgba.getpixel((sx, ay)))
         if not bg_samples:
             bg = (0, 0, 0, 0)
         else:
-            # median per channel (preserve alpha so transparent plate stays clear)
             rs = sorted(p[0] for p in bg_samples)
             gs = sorted(p[1] for p in bg_samples)
             bs = sorted(p[2] for p in bg_samples)
@@ -1110,8 +1139,13 @@ def _cover_and_draw_names(
     geom = _avatar_geom(tier)
     left_c = geom["left"]
     right_c = geom["right"]
-    for cx, _cy in (left_c, right_c):
-        _erase_placeholder_names(canvas, cx)
+    # Left baked label is "User"; right is wider "@User" — hard wipe both.
+    _erase_placeholder_names(
+        canvas, left_c[0], hard_half_w=REF_NAME_HARD_HALF_W_LEFT
+    )
+    _erase_placeholder_names(
+        canvas, right_c[0], hard_half_w=REF_NAME_HARD_HALF_W_RIGHT
+    )
 
     if canvas.mode != "RGBA":
         rgba = canvas.convert("RGBA")
